@@ -2,11 +2,16 @@ import { memo } from 'react';
 import { useI18n } from '../i18n/LocaleContext';
 import WaferDiagram from './WaferDiagram';
 import Icon from './Icon';
+import TransportInspector from './TransportInspector';
+import { getTransportContent } from '../data/transport';
+import type { TransportItemId } from '../data/transport';
 
-export default memo(function Inspector({ stage, onFocus }: { stage: number; onFocus: () => void }) {
-  const { stages, sources, evidenceLabels, text: { inspector: text } } = useI18n();
+export default memo(function Inspector({ stage, onFocus, transport, onDismissTransport }: { stage: number; onFocus: () => void; transport: TransportItemId | null; onDismissTransport: () => void }) {
+  const { locale, stages, sources, evidenceLabels, text: { inspector: text } } = useI18n();
   const selected = stages[stage];
-  return <aside className="inspector" aria-label={text.label}>
+  return <aside className="inspector" aria-label={transport ? getTransportContent(locale).selectionLabel : text.label} data-transport-selection={transport ?? undefined}>
+    {transport ? <TransportInspector itemId={transport} onBack={onDismissTransport} /> : null}
+    <div hidden={transport !== null}>
     <div className="step-number"><strong>{String(stage + 1).padStart(2, '0')}</strong><span>/ {String(stages.length).padStart(2, '0')} {text.categories}</span></div>
     <h2>{selected.title}</h2>
     <p className="equipment">{text.equipment}：{selected.equipment}</p>
@@ -30,5 +35,6 @@ export default memo(function Inspector({ stage, onFocus }: { stage: number; onFo
       <dl><dt>{text.action}</dt><dd>{selected.action}</dd><dt>{text.quality}</dt><dd>{selected.quality}</dd><dt>{text.dx}</dt><dd>{selected.dx}</dd></dl>
       <p className="diagram-note">{selected.waferNote}</p>
     </details>
+    </div>
   </aside>;
 });

@@ -11,6 +11,7 @@ export interface FabModel {
   stations: THREE.Group[];
   labelAnchors: THREE.Vector3[];
   carrier: THREE.Group;
+  rail: THREE.Group;
   highlights: THREE.Mesh[];
   movingParts: { object: THREE.Object3D; kind: 'spin' | 'scan' | 'arm'; stage: number }[];
   railPoints: THREE.Vector3[];
@@ -164,6 +165,8 @@ export function buildFab(): FabModel {
   };
   const foup = (parent: THREE.Object3D, x: number, y: number, z: number, translucent = true) => {
     const g = new THREE.Group();
+    g.name = 'FOUP容器';
+    g.userData.transportItem = 'foup';
     g.position.set(x, y, z);
     parent.add(g);
     box(g, 0.63, 0.1, 0.67, 0, 0.06, 0, palette.dark);
@@ -456,6 +459,7 @@ export function buildFab(): FabModel {
   // Generic OHT/FOUP demonstration; this route is not a reconstruction of Fab15.
   const rail = new THREE.Group();
   rail.name = 'OHT搬送レール・模式配置';
+  rail.userData.transportItem = 'oht';
   rail.userData.representation = 'OHT・FOUP搬送の一般的な模式表現。Fab15の実経路・実寸を示さない';
   group.add(rail);
   const railPoints = [
@@ -483,6 +487,7 @@ export function buildFab(): FabModel {
   }
   const carrier = new THREE.Group();
   carrier.name = 'OHT・FOUP 搬送キャリア';
+  carrier.userData.transportItem = 'oht';
   carrier.userData.representation = 'OHT・FOUP搬送の一般的な模式表現';
   carrier.position.set(-10, 4.5, -2);
   group.add(carrier);
@@ -526,7 +531,7 @@ export function buildFab(): FabModel {
   carrier.traverse(child => { child.userData.carrier = true; });
 
   return {
-    group, stations, labelAnchors, carrier, highlights, movingParts, railPoints,
+    group, stations, labelAnchors, carrier, rail, highlights, movingParts, railPoints,
     dispose: () => {
       geometries.forEach(geometry => geometry.dispose());
       materials.forEach(material => material.dispose());

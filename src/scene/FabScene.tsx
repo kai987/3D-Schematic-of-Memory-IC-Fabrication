@@ -7,10 +7,12 @@ import { buildFab, STATION_POSITIONS } from './buildFab';
 import type { SimulationSnapshot } from '../hooks/useSimulation';
 import { useI18n } from '../i18n/LocaleContext';
 import type { Locale, Theme } from '../i18n/types';
+import { getTransportContent } from '../data/transport';
+import type { TransportItemId } from '../data/transport';
 
 export type SceneView = 'all' | 'fab' | 'probe';
 export interface FabSceneHandle { reset: () => void; focus: (stage: number) => void; exportGLB: () => Promise<void> }
-interface Props { stage: number; showLabels: boolean; view: SceneView; theme: Theme; snapshot: RefObject<SimulationSnapshot>; onSelect: (id: number) => void }
+interface Props { stage: number; showLabels: boolean; view: SceneView; theme: Theme; transport: TransportItemId | null; snapshot: RefObject<SimulationSnapshot>; onSelect: (id: number) => void; onSelectTransport: (id: TransportItemId) => void }
 
 interface SceneRuntime {
   camera: THREE.OrthographicCamera;
@@ -42,12 +44,14 @@ const modelMetadata: Record<Locale, { purpose: string; representation: string; n
 
 function localizeModel(group: THREE.Group, stations: THREE.Group[], localized: ReturnType<typeof useI18n>) {
   const metadata = modelMetadata[localized.locale];
+  const transportContent = getTransportContent(localized.locale);
   group.name = localized.modelTitle;
   Object.assign(group.userData, {
     title: localized.modelTitle, language: localized.locale, disclaimer: localized.disclaimer,
     scope: localized.scopeNote, scopeNote: localized.scopeNote, modelPurpose: metadata.purpose,
     representation: metadata.representation, classificationNumberMeaning: metadata.numberMeaning,
     modelType: 'public-information-schematic', sources: localized.sources,
+    transportSystems: Object.values(transportContent.items),
     processes: localized.stages.map(s => ({
       id: s.id, title: s.title, equipment: s.equipment, description: s.description,
       evidenceStatus: s.evidenceStatus, evidenceLabel: localized.evidenceLabels[s.evidenceStatus],
@@ -71,6 +75,12 @@ function localizeModel(group: THREE.Group, stations: THREE.Group[], localized: R
     const object = group.getObjectByName(name);
     if (object) object.userData.representation = metadata.representation;
   }
+  group.traverse(object => {
+    const id = object.userData.transportItem as TransportItemId | undefined;
+    if (id !== 'oht' && id !== 'foup') return;
+    const item = transportContent.items[id];
+    Object.assign(object.userData, { language: localized.locale, title: item.title, description: item.description, scopeNote: item.scopeNote, sourceIds: item.sourceIds });
+  });
 }
 
 function applyTheme(r: SceneRuntime, theme: Theme) {
@@ -94,17 +104,23 @@ function applyTheme(r: SceneRuntime, theme: Theme) {
   });
 }
 
-const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, showLabels, view, theme, snapshot, onSelect }, ref) {
+const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, showLabels, view, theme, transport, snapshot, onSelect, onSelectTransport }, ref) {
   const localized = useI18n();
   const { locale, stages, text } = localized;
+  const transportContent = getTransportContent(locale);
   const liveI18n = useRef(localized);
   liveI18n.current = localized;
   const liveTheme = useRef(theme);
   liveTheme.current = theme;
   const host = useRef<HTMLDivElement>(null);
   const labels = useRef<(HTMLButtonElement | null)[]>([]);
+  const transportLabels = useRef<Record<TransportItemId, HTMLButtonElement | null>>({ oht: null, foup: null });
+  const transportPaths = useRef<Record<TransportItemId, SVGPathElement | null>>({ oht: null, foup: null });
+  const transportDots = useRef<Record<TransportItemId, SVGCircleElement | null>>({ oht: null, foup: null });
   const selection = useRef(onSelect);
   selection.current = onSelect;
+  const transportSelection = useRef(onSelectTransport);
+  transportSelection.current = onSelectTransport;
   const liveStage = useRef(stage);
   liveStage.current = stage;
   const liveLabels = useRef(showLabels);
@@ -226,6 +242,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     localizeModel(model.group, model.stations, liveI18n.current);
     for (const part of model.movingParts) part.object.userData.baseX = part.object.position.x;
     const payload = model.carrier.getObjectByName('FOUP昇降部');
+    const movingFoup = model.carrier.getObjectByName('FOUP容器');
     const cables = ['昇降ケーブル左', '昇降ケーブル右'].map(name => model.carrier.getObjectByName(name)).filter((object): object is THREE.Object3D => !!object);
     scene.add(model.group);
     const floor = model.group.getObjectByName('学習用クリーンルーム床・模式寸法');
@@ -254,11 +271,24 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects(model.stations, true);
+      const hits = raycaster.intersectObjects([...model.stations, model.rail, model.carrier], true)
+        .filter(hit => hit.object.userData.role !== 'selection');
       if (!hits.length) return;
       let object: THREE.Object3D | null = hits[0].object;
-      while (object && typeof object.userData.stage !== 'number') object = object.parent;
-      if (object) selection.current(object.userData.stage);
+      let stageId: number | undefined;
+      // Only ancestors of the actual nearest hit count. A cabinet cannot inherit
+      // a sibling FOUP's transport tag, while a FOUP inside a station wins over
+      // the general process tag carried by its mesh children.
+      while (object) {
+        const item = object.userData.transportItem;
+        if (item === 'oht' || item === 'foup') {
+          transportSelection.current(item);
+          return;
+        }
+        if (stageId === undefined && typeof object.userData.stage === 'number') stageId = object.userData.stage;
+        object = object.parent;
+      }
+      if (stageId !== undefined) selection.current(stageId);
     };
     const cancelTransition = () => { if (runtime.current) runtime.current.transitioning = false; };
     controls.addEventListener('start', cancelTransition);
@@ -268,6 +298,8 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     renderer.domElement.addEventListener('webglcontextlost', contextLost);
     let raf = 0;
     const projected = new THREE.Vector3();
+    const transportAnchor = new THREE.Vector3();
+    const ohtAnchor = new THREE.Vector3(2.8, 4.6, 2);
     const stationPoint = (id: number) => {
       const [x, , z] = STATION_POSITIONS[id];
       return new THREE.Vector3(x, 4.5, z > 0 ? 2 : -2);
@@ -324,7 +356,69 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
         else part.object.rotation.y = Math.sin(t * 1.2) * 0.22;
       }
       const width = container.clientWidth, height = container.clientHeight;
-      const placed: { x: number; y: number; width: number }[] = [];
+      const placed: { x: number; y: number; width: number; height: number }[] = [];
+      const overlaps = (x: number, y: number, w: number, h: number) => placed.some(p =>
+        Math.abs(p.y - p.height / 2 - (y - h / 2)) < (p.height + h) / 2 + 7
+        && Math.abs(p.x - x) < (p.width + w) / 2 + 8);
+
+      // Transport labels remain usable during orbit, zoom, and mobile views.
+      // Their leader lines point to the actual projected rail/container anchors.
+      for (const id of ['oht', 'foup'] as const) {
+        const label = transportLabels.current[id];
+        const path = transportPaths.current[id];
+        const dot = transportDots.current[id];
+        if (!label) continue;
+        if (!liveLabels.current || width < 1 || height < 1) {
+          label.style.display = 'none';
+          if (path) path.style.display = 'none';
+          if (dot) dot.style.display = 'none';
+          continue;
+        }
+        label.style.display = 'flex';
+        label.style.maxWidth = `${Math.max(80, width - 24)}px`;
+        const w = label.offsetWidth || 112;
+        const h = label.offsetHeight || 34;
+        const mobile = width < 640;
+        const safeTop = mobile ? 92 : 76;
+        const safeBottom = mobile ? 96 : 84;
+        const minX = w / 2 + 12, maxX = Math.max(minX, width - w / 2 - 12);
+        const minY = Math.min(safeTop + h, height - 16);
+        const maxY = Math.max(minY, height - safeBottom);
+        if (id === 'foup' && movingFoup) {
+          transportAnchor.set(0, 0.67, 0);
+          movingFoup.localToWorld(transportAnchor);
+        } else transportAnchor.copy(ohtAnchor);
+        projected.copy(transportAnchor).project(camera);
+        const rawX = (projected.x + 1) / 2 * width;
+        const rawY = (1 - projected.y) / 2 * height;
+        const clamp = (x: number, y: number) => ({
+          x: THREE.MathUtils.clamp(x, minX, maxX), y: THREE.MathUtils.clamp(y, minY, maxY),
+        });
+        let spot = clamp(rawX, rawY - 16);
+        const candidates = [[0, -44], [0, 44], [-w - 18, 0], [w + 18, 0], [0, -88], [0, 88]];
+        if (overlaps(spot.x, spot.y, w, h)) {
+          for (const [dx, dy] of candidates) {
+            const candidate = clamp(rawX + dx, rawY - 16 + dy);
+            if (!overlaps(candidate.x, candidate.y, w, h)) { spot = candidate; break; }
+          }
+        }
+        label.style.transform = `translate(${spot.x}px, ${spot.y}px) translate(-50%, -100%)`;
+        const clamped = Math.abs(spot.x - rawX) > 1 || Math.abs(spot.y - (rawY - 16)) > 1;
+        label.dataset.clamped = String(clamped);
+        placed.push({ x: spot.x, y: spot.y, width: w, height: h });
+        const targetX = THREE.MathUtils.clamp(rawX, 3, width - 3);
+        const targetY = THREE.MathUtils.clamp(rawY, 3, height - 3);
+        const showLeader = mobile || clamped;
+        if (path) {
+          path.style.display = showLeader ? '' : 'none';
+          path.setAttribute('d', `M${spot.x} ${spot.y} L${targetX} ${targetY}`);
+        }
+        if (dot) {
+          dot.style.display = showLeader ? '' : 'none';
+          dot.setAttribute('cx', String(targetX));
+          dot.setAttribute('cy', String(targetY));
+        }
+      }
       // Selected label is retained, then hide only labels that collide after orbit/zoom.
       const order = [liveStage.current, ...liveI18n.current.stages.map(s => s.id).filter(id => id !== liveStage.current)];
       for (const id of order) {
@@ -334,12 +428,13 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
         const x = (projected.x + 1) / 2 * width, y = (1 - projected.y) / 2 * height;
         const phaseVisible = liveView.current === 'all' || (liveView.current === 'fab' ? id < 8 : id >= 8);
         const w = label.offsetWidth || 100;
-        const collides = placed.some(p => Math.abs(p.y - y) < 36 && Math.abs(p.x - x) < (p.width + w) / 2 + 7);
+        const h = label.offsetHeight || 34;
+        const collides = overlaps(x, y, w, h);
         const visible = liveLabels.current && phaseVisible && projected.z >= -1 && projected.z <= 1
           && x > w / 2 && x < width - w / 2 && y > 24 && y < height - 20 && !collides;
         label.style.display = visible ? 'flex' : 'none';
         label.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%)`;
-        if (visible) placed.push({ x, y, width: w });
+        if (visible) placed.push({ x, y, width: w, height: h });
       }
       renderer.render(scene, camera);
       raf = requestAnimationFrame(animate);
@@ -379,6 +474,21 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     {!ready && !error ? <div className="scene-loading">{text.scene.loading}</div> : null}
     {error ? <div className="scene-error" role="alert">{text.scene[error]}</div> : null}
     <div className="scene-labels" aria-label={text.scene.selectEquipment}>
+      <svg className="transport-leaders" aria-hidden="true" focusable="false" width="100%" height="100%"
+        style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+        {(['oht', 'foup'] as const).map(id => <g key={id} data-transport={id}>
+          <path ref={element => { transportPaths.current[id] = element; }} fill="none" stroke="var(--transport-line, #ae8933)" strokeWidth="1.2" vectorEffect="non-scaling-stroke" style={{ display: 'none' }} />
+          <circle ref={element => { transportDots.current[id] = element; }} r="2.4" fill="var(--transport-line, #ae8933)" style={{ display: 'none' }} />
+        </g>)}
+      </svg>
+      <div className="transport-labels" aria-label={transportContent.selectionLabel}>
+        {(['oht', 'foup'] as const).map(id => <button key={id}
+          ref={element => { transportLabels.current[id] = element; }}
+          onClick={() => transportSelection.current(id)}
+          className={`machine-label transport-label ${transport === id ? 'selected' : ''}`}
+          data-transport={id} aria-pressed={transport === id} aria-label={transportContent.items[id].title}
+          style={{ display: 'none' }}>{transportContent.items[id].label}</button>)}
+      </div>
       {stages.map(s => <button key={s.id} ref={element => { labels.current[s.id] = element; }}
         onClick={() => selection.current(s.id)} className={`machine-label ${s.id === stage ? 'selected' : ''}`}
         aria-label={`${s.id + 1}. ${s.title} · ${text.scene.equipment}`} aria-pressed={s.id === stage} style={{ display: 'none' }}>

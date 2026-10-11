@@ -9,6 +9,15 @@ import AboutDialog from './components/AboutDialog';
 import { useSimulation } from './hooks/useSimulation';
 import { useI18n } from './i18n/LocaleContext';
 import type { Locale } from './i18n/types';
+import type { TransportItemId } from './data/transport';
+
+function revealInspector() {
+  requestAnimationFrame(() => {
+    const panel = document.querySelector<HTMLElement>('.inspector');
+    if (window.innerWidth <= 700) panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else panel?.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+}
 
 export default function App() {
   const { text, locale, setLocale, theme, setTheme, scopeNote } = useI18n();
@@ -17,6 +26,7 @@ export default function App() {
   const [view, setView] = useState<SceneView>('all');
   const [showLabels, setShowLabels] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
+  const [transport, setTransport] = useState<TransportItemId | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<'saved' | 'saveFailed' | ''>('');
   useEffect(() => {
@@ -28,6 +38,18 @@ export default function App() {
     scene.current?.focus(simulation.stage);
     if (window.innerWidth <= 700) document.querySelector('.canvas-area')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [simulation.stage]);
+  const selectStage = useCallback((id: number) => {
+    setTransport(null);
+    simulation.selectStage(id);
+  }, [simulation.selectStage]);
+  const selectTransport = useCallback((id: TransportItemId) => {
+    setTransport(id);
+    revealInspector();
+  }, []);
+  const dismissTransport = useCallback(() => {
+    setTransport(null);
+    revealInspector();
+  }, []);
   const resetView = () => { setView('all'); scene.current?.reset(); };
   const save = async () => {
     setSaving(true); setSaveMessage('');
@@ -52,7 +74,7 @@ export default function App() {
     <main className="workspace">
       <section className="model-area" aria-label={text.viewLabel}>
         <div className="canvas-area">
-          <FabScene ref={scene} theme={theme} stage={simulation.stage} snapshot={simulation.snapshot} showLabels={showLabels} view={view} onSelect={simulation.selectStage} />
+          <FabScene ref={scene} theme={theme} stage={simulation.stage} snapshot={simulation.snapshot} showLabels={showLabels} view={view} onSelect={selectStage} transport={transport} onSelectTransport={selectTransport} />
           <div className="viewport-toolbar">
             <div className="view-tabs" aria-label={text.rangeLabel}>
               {(['all', 'fab', 'probe'] as const).map(value =>
@@ -70,9 +92,9 @@ export default function App() {
         </div>
         <Player simulation={simulation} />
       </section>
-      <Inspector stage={simulation.stage} onFocus={focus} />
+      <Inspector stage={simulation.stage} onFocus={focus} transport={transport} onDismissTransport={dismissTransport} />
     </main>
-    <ProcessRail stage={simulation.stage} onSelect={simulation.selectStage} />
+    <ProcessRail stage={simulation.stage} onSelect={selectStage} />
     <footer className="app-footer">
       <p>{text.footer}</p>
       <div className="footer-actions"><button onClick={() => setShowAbout(true)}><Icon name="book" size={15} />{text.sourcesButton}</button>
