@@ -74,7 +74,7 @@ export default function App() {
     <main className="workspace">
       <section className="model-area" aria-label={text.viewLabel}>
         <div className="canvas-area">
-          <FabScene ref={scene} theme={theme} stage={simulation.stage} snapshot={simulation.snapshot} showLabels={showLabels} view={view} onSelect={selectStage} transport={transport} onSelectTransport={selectTransport} />
+          <FabScene ref={scene} theme={theme} stage={simulation.stage} playing={simulation.playing} playbackPosition={simulation.progress} snapshot={simulation.snapshot} showLabels={showLabels} view={view} onSelect={selectStage} transport={transport} onSelectTransport={selectTransport} />
           <div className="viewport-toolbar">
             <div className="view-tabs" aria-label={text.rangeLabel}>
               {(['all', 'fab', 'probe'] as const).map(value =>

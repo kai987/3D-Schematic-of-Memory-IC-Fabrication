@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { optimizeStaticMeshes } from './optimizeStaticMeshes.ts';
+import type { StaticBatchStats } from './optimizeStaticMeshes.ts';
 
 export const STATION_POSITIONS: [number, number, number][] = [
   [-10, 0, -4], [-5, 0, -4], [0, 0, -4], [5, 0, -4], [10, 0, -4],
@@ -15,11 +17,12 @@ export interface FabModel {
   highlights: THREE.Mesh[];
   movingParts: { object: THREE.Object3D; kind: 'spin' | 'scan' | 'arm'; stage: number }[];
   railPoints: THREE.Vector3[];
+  batching: StaticBatchStats;
   dispose: () => void;
 }
 
 /** Process classifications for a Fab15 public-information learning model, in a schematic layout. */
-export function buildFab(): FabModel {
+export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean } = {}): FabModel {
   const group = new THREE.Group();
   group.name = 'Fab15 — ウェーハ製造工程分類・公開資料学習モデル';
   group.userData.modelPurpose = 'Fab15公開資料に基づく工程分類の学習用モデル';
@@ -530,8 +533,26 @@ export function buildFab(): FabModel {
   });
   carrier.traverse(child => { child.userData.carrier = true; });
 
+  let batching: StaticBatchStats;
+  if (optimizeStatic) {
+    const result = optimizeStaticMeshes(group, {
+      excludedRoots: new Set<THREE.Object3D>([carrier, ...movingParts.map(part => part.object), ...highlights]),
+    });
+    batching = result.stats;
+    result.geometries.forEach((geometry, id) => geometries.set(`static-batch:${id}`, geometry));
+    const retained = new Set<THREE.BufferGeometry>();
+    group.traverse(object => { if (object instanceof THREE.Mesh) retained.add(object.geometry); });
+    geometries.forEach((geometry, key) => {
+      if (!retained.has(geometry)) { geometry.dispose(); geometries.delete(key); }
+    });
+  } else {
+    let meshes = 0;
+    group.traverse(object => { if (object instanceof THREE.Mesh) meshes++; });
+    batching = { beforeMeshes: meshes, afterMeshes: meshes, sourceMeshes: 0, batches: 0 };
+  }
+
   return {
-    group, stations, labelAnchors, carrier, rail, highlights, movingParts, railPoints,
+    group, stations, labelAnchors, carrier, rail, highlights, movingParts, railPoints, batching,
     dispose: () => {
       geometries.forEach(geometry => geometry.dispose());
       materials.forEach(material => material.dispose());

@@ -9,10 +9,12 @@ import { useI18n } from '../i18n/LocaleContext';
 import type { Locale, Theme } from '../i18n/types';
 import { getTransportContent } from '../data/transport';
 import type { TransportItemId } from '../data/transport';
+import { createDemandLoop } from '../lib/demandLoop';
+import { createSceneLabels } from './sceneLabels';
 
 export type SceneView = 'all' | 'fab' | 'probe';
 export interface FabSceneHandle { reset: () => void; focus: (stage: number) => void; exportGLB: () => Promise<void> }
-interface Props { stage: number; showLabels: boolean; view: SceneView; theme: Theme; transport: TransportItemId | null; snapshot: RefObject<SimulationSnapshot>; onSelect: (id: number) => void; onSelectTransport: (id: TransportItemId) => void }
+interface Props { stage: number; playing: boolean; playbackPosition: number; showLabels: boolean; view: SceneView; theme: Theme; transport: TransportItemId | null; snapshot: RefObject<SimulationSnapshot>; onSelect: (id: number) => void; onSelectTransport: (id: TransportItemId) => void }
 
 interface SceneRuntime {
   camera: THREE.OrthographicCamera;
@@ -28,6 +30,8 @@ interface SceneRuntime {
   desiredCamera: THREE.Vector3;
   desiredZoom: number;
   transitioning: boolean;
+  invalidate: () => void;
+  labels: ReturnType<typeof createSceneLabels>;
 }
 
 const exportNames: Record<Locale, string> = {
@@ -104,7 +108,7 @@ function applyTheme(r: SceneRuntime, theme: Theme) {
   });
 }
 
-const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, showLabels, view, theme, transport, snapshot, onSelect, onSelectTransport }, ref) {
+const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, playing, playbackPosition, showLabels, view, theme, transport, snapshot, onSelect, onSelectTransport }, ref) {
   const localized = useI18n();
   const { locale, stages, text } = localized;
   const transportContent = getTransportContent(locale);
@@ -145,6 +149,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
       r.camera.updateProjectionMatrix();
       r.transitioning = false;
     }
+    r.invalidate();
   };
 
   useImperativeHandle(ref, () => ({
@@ -247,7 +252,17 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     scene.add(model.group);
     const floor = model.group.getObjectByName('学習用クリーンルーム床・模式寸法');
     const floorMaterial = floor instanceof THREE.Mesh && floor.material instanceof THREE.MeshStandardMaterial ? floor.material : null;
-    runtime.current = { camera, controls, model, renderer, scene, hemisphere, sun, fill, floorMaterial, desiredTarget: controls.target.clone(), desiredCamera: camera.position.clone(), desiredZoom: 1, transitioning: false };
+    let demand: ReturnType<typeof createDemandLoop> | null = null;
+    const invalidate = () => demand?.invalidate();
+    const sceneLabels = createSceneLabels({
+      processButtons: labels.current,
+      transportButtons: transportLabels.current,
+      transportPaths: transportPaths.current,
+      transportDots: transportDots.current,
+      anchors: model.labelAnchors,
+      movingFoup,
+    });
+    runtime.current = { camera, controls, model, renderer, scene, hemisphere, sun, fill, floorMaterial, desiredTarget: controls.target.clone(), desiredCamera: camera.position.clone(), desiredZoom: 1, transitioning: false, invalidate, labels: sceneLabels };
     applyTheme(runtime.current, liveTheme.current);
 
     const resize = () => {
@@ -258,6 +273,8 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
       camera.top = span / 2; camera.bottom = -span / 2;
       camera.updateProjectionMatrix();
       renderer.setSize(width, height);
+      sceneLabels.resize(width, height);
+      invalidate();
     };
     const observer = new ResizeObserver(resize);
     observer.observe(container);
@@ -292,14 +309,13 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     };
     const cancelTransition = () => { if (runtime.current) runtime.current.transitioning = false; };
     controls.addEventListener('start', cancelTransition);
+    controls.addEventListener('change', invalidate);
     renderer.domElement.addEventListener('pointerdown', pointerDown);
     renderer.domElement.addEventListener('pointerup', pointerUp);
     const contextLost = (e: Event) => { e.preventDefault(); setError('contextLost'); };
     renderer.domElement.addEventListener('webglcontextlost', contextLost);
-    let raf = 0;
-    const projected = new THREE.Vector3();
-    const transportAnchor = new THREE.Vector3();
-    const ohtAnchor = new THREE.Vector3(2.8, 4.6, 2);
+    const diagnostics = new URLSearchParams(window.location.search).has('perf');
+    let renderedFrames = 0;
     const stationPoint = (id: number) => {
       const [x, , z] = STATION_POSITIONS[id];
       return new THREE.Vector3(x, 4.5, z > 0 ? 2 : -2);
@@ -320,7 +336,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     };
     const animate = () => {
       const r = runtime.current;
-      if (!r) return;
+      if (!r) return false;
       const state = snapshot.current;
       if (r.transitioning) {
         controls.target.lerp(r.desiredTarget, 0.12);
@@ -329,7 +345,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
         camera.updateProjectionMatrix();
         if (camera.position.distanceTo(r.desiredCamera) < 0.03 && Math.abs(camera.zoom - r.desiredZoom) < 0.01) r.transitioning = false;
       }
-      controls.update();
+      const cameraChanged = controls.update();
       model.highlights.forEach((mesh, id) => { mesh.visible = id === liveStage.current; });
       {
         const to = state.stage, from = state.previousStage;
@@ -355,94 +371,36 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
         else if (part.kind === 'scan') part.object.position.x = (part.object.userData.baseX ?? 0) + Math.sin(t * 1.5) * 0.22;
         else part.object.rotation.y = Math.sin(t * 1.2) * 0.22;
       }
-      const width = container.clientWidth, height = container.clientHeight;
-      const placed: { x: number; y: number; width: number; height: number }[] = [];
-      const overlaps = (x: number, y: number, w: number, h: number) => placed.some(p =>
-        Math.abs(p.y - p.height / 2 - (y - h / 2)) < (p.height + h) / 2 + 7
-        && Math.abs(p.x - x) < (p.width + w) / 2 + 8);
-
-      // Transport labels remain usable during orbit, zoom, and mobile views.
-      // Their leader lines point to the actual projected rail/container anchors.
-      for (const id of ['oht', 'foup'] as const) {
-        const label = transportLabels.current[id];
-        const path = transportPaths.current[id];
-        const dot = transportDots.current[id];
-        if (!label) continue;
-        if (!liveLabels.current || width < 1 || height < 1) {
-          label.style.display = 'none';
-          if (path) path.style.display = 'none';
-          if (dot) dot.style.display = 'none';
-          continue;
-        }
-        label.style.display = 'flex';
-        label.style.maxWidth = `${Math.max(80, width - 24)}px`;
-        const w = label.offsetWidth || 112;
-        const h = label.offsetHeight || 34;
-        const mobile = width < 640;
-        const safeTop = mobile ? 92 : 76;
-        const safeBottom = mobile ? 96 : 84;
-        const minX = w / 2 + 12, maxX = Math.max(minX, width - w / 2 - 12);
-        const minY = Math.min(safeTop + h, height - 16);
-        const maxY = Math.max(minY, height - safeBottom);
-        if (id === 'foup' && movingFoup) {
-          transportAnchor.set(0, 0.67, 0);
-          movingFoup.localToWorld(transportAnchor);
-        } else transportAnchor.copy(ohtAnchor);
-        projected.copy(transportAnchor).project(camera);
-        const rawX = (projected.x + 1) / 2 * width;
-        const rawY = (1 - projected.y) / 2 * height;
-        const clamp = (x: number, y: number) => ({
-          x: THREE.MathUtils.clamp(x, minX, maxX), y: THREE.MathUtils.clamp(y, minY, maxY),
-        });
-        let spot = clamp(rawX, rawY - 16);
-        const candidates = [[0, -44], [0, 44], [-w - 18, 0], [w + 18, 0], [0, -88], [0, 88]];
-        if (overlaps(spot.x, spot.y, w, h)) {
-          for (const [dx, dy] of candidates) {
-            const candidate = clamp(rawX + dx, rawY - 16 + dy);
-            if (!overlaps(candidate.x, candidate.y, w, h)) { spot = candidate; break; }
-          }
-        }
-        label.style.transform = `translate(${spot.x}px, ${spot.y}px) translate(-50%, -100%)`;
-        const clamped = Math.abs(spot.x - rawX) > 1 || Math.abs(spot.y - (rawY - 16)) > 1;
-        label.dataset.clamped = String(clamped);
-        placed.push({ x: spot.x, y: spot.y, width: w, height: h });
-        const targetX = THREE.MathUtils.clamp(rawX, 3, width - 3);
-        const targetY = THREE.MathUtils.clamp(rawY, 3, height - 3);
-        const showLeader = mobile || clamped;
-        if (path) {
-          path.style.display = showLeader ? '' : 'none';
-          path.setAttribute('d', `M${spot.x} ${spot.y} L${targetX} ${targetY}`);
-        }
-        if (dot) {
-          dot.style.display = showLeader ? '' : 'none';
-          dot.setAttribute('cx', String(targetX));
-          dot.setAttribute('cy', String(targetY));
-        }
-      }
-      // Selected label is retained, then hide only labels that collide after orbit/zoom.
-      const order = [liveStage.current, ...liveI18n.current.stages.map(s => s.id).filter(id => id !== liveStage.current)];
-      for (const id of order) {
-        const label = labels.current[id];
-        if (!label) continue;
-        projected.copy(model.labelAnchors[id]).project(camera);
-        const x = (projected.x + 1) / 2 * width, y = (1 - projected.y) / 2 * height;
-        const phaseVisible = liveView.current === 'all' || (liveView.current === 'fab' ? id < 8 : id >= 8);
-        const w = label.offsetWidth || 100;
-        const h = label.offsetHeight || 34;
-        const collides = overlaps(x, y, w, h);
-        const visible = liveLabels.current && phaseVisible && projected.z >= -1 && projected.z <= 1
-          && x > w / 2 && x < width - w / 2 && y > 24 && y < height - 20 && !collides;
-        label.style.display = visible ? 'flex' : 'none';
-        label.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%)`;
-        if (visible) placed.push({ x, y, width: w, height: h });
-      }
+      sceneLabels.update(camera, { visible: liveLabels.current, stage: liveStage.current, view: liveView.current });
       renderer.render(scene, camera);
-      raf = requestAnimationFrame(animate);
+      if (diagnostics) {
+        container.dataset.renderFrames = String(++renderedFrames);
+        container.dataset.renderCalls = String(renderer.info.render.calls);
+        container.dataset.renderTriangles = String(renderer.info.render.triangles);
+        container.dataset.labelMeasurements = String(sceneLabels.getMeasurementCount());
+      }
+      return state.playing || r.transitioning || cameraChanged;
     };
-    animate();
+    demand = createDemandLoop({ requestFrame: requestAnimationFrame, cancelFrame: cancelAnimationFrame, render: animate });
+    const visibilityChanged = () => demand?.setVisible(document.visibilityState !== 'hidden');
+    const fontsChanged = () => { sceneLabels.invalidateMeasurements(); invalidate(); };
+    document.addEventListener('visibilitychange', visibilityChanged);
+    document.fonts?.addEventListener('loadingdone', fontsChanged);
+    let disposed = false;
+    document.fonts?.ready.then(() => { if (!disposed) fontsChanged(); });
+    visibilityChanged();
+    invalidate();
     setReady(true);
     return () => {
-      cancelAnimationFrame(raf);
+      disposed = true;
+      demand?.dispose();
+      document.removeEventListener('visibilitychange', visibilityChanged);
+      document.fonts?.removeEventListener('loadingdone', fontsChanged);
+      controls.removeEventListener('start', cancelTransition);
+      controls.removeEventListener('change', invalidate);
+      renderer.domElement.removeEventListener('pointerdown', pointerDown);
+      renderer.domElement.removeEventListener('pointerup', pointerUp);
+      renderer.domElement.removeEventListener('webglcontextlost', contextLost);
       observer.disconnect();
       controls.dispose();
       model.dispose();
@@ -453,7 +411,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
   }, [snapshot]);
 
   useEffect(() => {
-    if (runtime.current) applyTheme(runtime.current, theme);
+    if (runtime.current) { applyTheme(runtime.current, theme); runtime.current.invalidate(); }
   }, [theme, ready]);
 
   useEffect(() => {
@@ -461,7 +419,18 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     if (!r) return;
     localizeModel(r.model.group, r.model.stations, liveI18n.current);
     r.renderer.domElement.setAttribute('aria-label', liveI18n.current.text.scene.canvasLabel);
+    r.labels.invalidateMeasurements();
+    r.invalidate();
   }, [locale, ready]);
+
+  useEffect(() => {
+    runtime.current?.invalidate();
+  }, [stage, playing, showLabels, transport, ready]);
+
+  useEffect(() => {
+    // Seeking within one process changes the carrier without changing stage.
+    if (!playing) runtime.current?.invalidate();
+  }, [playbackPosition, playing]);
 
   useEffect(() => {
     if (!ready) return;
