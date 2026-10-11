@@ -1,26 +1,24 @@
 import { useId } from 'react';
-
-const stageNames = [
-  'シリコンウェーハ', '洗浄したウェーハ', '薄膜の成膜', '露光とパターン形成',
-  'エッチング', 'イオン注入', '表面の平坦化', '光学計測',
-  'ウェーハ検査',
-];
+import { useI18n } from '../i18n/LocaleContext';
+import { waferLabels } from '../data/waferLabels';
 
 type LeaderProps = { x: number; y: number; endX: number; endY: number; label: string };
 
 function Leader({ x, y, endX, endY, label }: LeaderProps) {
   const elbowX = endX > x ? endX - 12 : endX + 12;
   return (
-    <g fill="none" stroke="#354a62" strokeWidth="0.85" strokeLinejoin="round">
+    <g fill="none" stroke="var(--diagram-ink)" strokeWidth="0.85" strokeLinejoin="round">
       <path d={`M${x} ${y} L${elbowX} ${endY} H${endX}`} />
-      <circle cx={x} cy={y} r="1.6" fill="#354a62" stroke="none" />
-      <text x={endX} y={endY - 7} fill="#354a62" stroke="none" fontSize="10" textAnchor={endX > x ? 'end' : 'start'}>{label}</text>
+      <circle cx={x} cy={y} r="1.6" fill="var(--diagram-ink)" stroke="none" />
+      <text x={endX} y={endY - 7} fill="var(--diagram-ink)" stroke="none" fontSize="10" textAnchor={endX > x ? 'end' : 'start'}>{label}</text>
     </g>
   );
 }
 
 /** ウェーハ工程の説明用模式図。Fab15の実断面や実測結果を表すものではありません。 */
 export default function WaferDiagram({ stage }: { stage: number }) {
+  const { locale } = useI18n();
+  const text = waferLabels[locale];
   const id = useId().replace(/:/g, '');
   const current = Math.max(0, Math.min(8, stage));
   const hasFilm = current >= 2 && current <= 8;
@@ -30,8 +28,8 @@ export default function WaferDiagram({ stage }: { stage: number }) {
 
   return (
     <div className="wafer-diagram">
-      <svg viewBox="0 0 320 230" role="img" aria-label={`${stageNames[current]}の模式図`} width="100%">
-        <title>{stageNames[current]}の模式図</title>
+      <svg viewBox="0 0 320 230" role="img" aria-label={`${text.stageNames[current]}${text.diagramSuffix}`} width="100%">
+        <title>{text.stageNames[current]}{text.diagramSuffix}</title>
         <defs>
           <linearGradient id={`${id}-silicon`} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0" stopColor="#dbe8ee" /><stop offset="0.46" stopColor="#a5becb" /><stop offset="1" stopColor="#628298" />
@@ -135,20 +133,20 @@ export default function WaferDiagram({ stage }: { stage: number }) {
               </g>
             )}
 
-            <Leader x={220} y={141} endX={297} endY={183} label="シリコンウェーハ" />
-            {current === 1 && <Leader x={101} y={102} endX={23} endY={61} label="洗浄液" />}
-            {current === 2 && <Leader x={88} y={118} endX={23} endY={63} label="薄膜" />}
-            {current === 3 && <Leader x={106} y={97} endX={23} endY={69} label="レジスト" />}
-            {current === 4 && <Leader x={106} y={97} endX={23} endY={64} label="加工した薄膜" />}
-            {current === 5 && <Leader x={101} y={60} endX={23} endY={38} label="イオン" />}
-            {current === 6 && <Leader x={98} y={110} endX={23} endY={66} label="平坦な表面" />}
-            {current === 7 && <Leader x={152} y={33} endX={284} endY={35} label="光学センサー" />}
-            {current === 8 && <Leader x={188} y={123} endX={291} endY={70} label="検査位置（例）" />}
+            <Leader x={220} y={141} endX={297} endY={183} label={text.wafer} />
+            {current === 1 && <Leader x={101} y={102} endX={23} endY={61} label={text.cleaning} />}
+            {current === 2 && <Leader x={88} y={118} endX={23} endY={63} label={text.film} />}
+            {current === 3 && <Leader x={106} y={97} endX={23} endY={69} label={text.resist} />}
+            {current === 4 && <Leader x={106} y={97} endX={23} endY={64} label={text.etchedFilm} />}
+            {current === 5 && <Leader x={101} y={60} endX={23} endY={38} label={text.ions} />}
+            {current === 6 && <Leader x={98} y={110} endX={23} endY={66} label={text.surface} />}
+            {current === 7 && <Leader x={152} y={33} endX={284} endY={35} label={text.sensor} />}
+            {current === 8 && <Leader x={188} y={123} endX={291} endY={70} label={text.testPoint} />}
           </g>
         )}
 
       </svg>
-      <div className="wafer-caption">ウェーハの状態：説明用の模式図（Fab15の実断面・実測結果ではありません）</div>
+      <div className="wafer-caption">{text.caption}</div>
     </div>
   );
 }

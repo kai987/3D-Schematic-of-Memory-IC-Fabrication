@@ -7,16 +7,18 @@ import Player from './components/Player';
 import ProcessRail from './components/ProcessRail';
 import AboutDialog from './components/AboutDialog';
 import { useSimulation } from './hooks/useSimulation';
-import { SCOPE_NOTE } from './data/processes';
+import { useI18n } from './i18n/LocaleContext';
+import type { Locale } from './i18n/types';
 
 export default function App() {
+  const { text, locale, setLocale, theme, setTheme, scopeNote } = useI18n();
   const simulation = useSimulation();
   const scene = useRef<FabSceneHandle>(null);
   const [view, setView] = useState<SceneView>('all');
   const [showLabels, setShowLabels] = useState(true);
   const [showAbout, setShowAbout] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState('');
+  const [saveMessage, setSaveMessage] = useState<'saved' | 'saveFailed' | ''>('');
   useEffect(() => {
     if (!saveMessage) return;
     const timer = setTimeout(() => setSaveMessage(''), 4000);
@@ -29,34 +31,41 @@ export default function App() {
   const resetView = () => { setView('all'); scene.current?.reset(); };
   const save = async () => {
     setSaving(true); setSaveMessage('');
-    try { await scene.current?.exportGLB(); setSaveMessage('GLBファイルを保存しました。'); }
-    catch { setSaveMessage('保存できませんでした。もう一度お試しください。'); }
+    try { if (!scene.current) throw new Error('Scene unavailable'); await scene.current.exportGLB(); setSaveMessage('saved'); }
+    catch { setSaveMessage('saveFailed'); }
     finally { setSaving(false); }
   };
   return <div className="app">
     <header className="app-header">
-      <div className="brand"><Icon name="chip" size={48} /><h1>東広島 Fab15</h1></div>
-      <p className="subtitle">DRAMウェーハ製造工程</p>
-      <p className="model-kind">DRAMウェーハの3D学習モデル</p>
+      <div className="brand"><Icon name="chip" size={48} /><h1>{text.brand}</h1></div>
+      <div className="header-description"><p className="subtitle">{text.subtitle}</p><p className="model-kind">{text.modelKind}</p></div>
+      <div className="display-controls">
+        <div className="theme-control" role="group" aria-label={text.appearance}>
+          {(['day', 'night'] as const).map(value => <button key={value} onClick={() => setTheme(value)} aria-pressed={theme === value} className={theme === value ? 'active' : ''}><Icon name={value === 'day' ? 'sun' : 'moon'} size={16} /><span>{text[value]}</span></button>)}
+        </div>
+        <label className="language-control"><span className="sr-only">{text.language}</span><select aria-label={text.language} value={locale} onChange={event => setLocale(event.target.value as Locale)}>
+          <option value="ja" lang="ja">日本語</option><option value="en" lang="en">English</option><option value="zh" lang="zh-CN">中文</option>
+        </select></label>
+      </div>
     </header>
-    <div className="scope-banner" role="note"><strong>マイクロンの公開資料に基づく工程区分</strong><p>{SCOPE_NOTE}</p></div>
+    <div className="scope-banner" role="note"><strong>{text.scopeTitle}</strong><p>{scopeNote}</p></div>
     <main className="workspace">
-      <section className="model-area" aria-label="製造工程の3Dビュー">
+      <section className="model-area" aria-label={text.viewLabel}>
         <div className="canvas-area">
-          <FabScene ref={scene} stage={simulation.stage} snapshot={simulation.snapshot} showLabels={showLabels} view={view} onSelect={simulation.selectStage} />
+          <FabScene ref={scene} theme={theme} stage={simulation.stage} snapshot={simulation.snapshot} showLabels={showLabels} view={view} onSelect={simulation.selectStage} />
           <div className="viewport-toolbar">
-            <div className="view-tabs" aria-label="表示する工程範囲">
-              {([['all', '全体'], ['fab', '前工程'], ['probe', 'プローブ']] as const).map(([value, title]) =>
-                <button key={value} onClick={() => setView(value)} className={view === value ? 'active' : ''} aria-pressed={view === value}>{title}</button>)}
+            <div className="view-tabs" aria-label={text.rangeLabel}>
+              {(['all', 'fab', 'probe'] as const).map(value =>
+                <button key={value} onClick={() => setView(value)} className={view === value ? 'active' : ''} aria-pressed={view === value}>{text[value]}</button>)}
             </div>
             <div className="view-options">
-              <button onClick={resetView} className="reset-view" aria-label="視点を戻す"><Icon name="reset" /><span>視点を戻す</span></button>
-              <button className="label-toggle" onClick={() => setShowLabels(!showLabels)} aria-pressed={showLabels} aria-label="ラベルを表示"><Icon name="tag" /><span>ラベル</span><span className={`switch ${showLabels ? 'on' : ''}`} /></button>
+              <button onClick={resetView} className="reset-view" aria-label={text.reset}><Icon name="reset" /><span>{text.reset}</span></button>
+              <button className="label-toggle" onClick={() => setShowLabels(!showLabels)} aria-pressed={showLabels} aria-label={text.showLabels}><Icon name="tag" /><span>{text.labels}</span><span className={`switch ${showLabels ? 'on' : ''}`} /></button>
             </div>
           </div>
           <div className="viewport-bottom">
-            <span className="repeat-note"><Icon name="rotate" size={15} />搬送・反復の動きは説明用の模式表現</span>
-            <span className="orbit-hint">ドラッグで回転 · スクロールで拡大</span>
+            <span className="repeat-note"><Icon name="rotate" size={15} />{text.repeatNote}</span>
+            <span className="orbit-hint">{text.orbitHint}</span>
           </div>
         </div>
         <Player simulation={simulation} />
@@ -65,11 +74,11 @@ export default function App() {
     </main>
     <ProcessRail stage={simulation.stage} onSelect={simulation.selectStage} />
     <footer className="app-footer">
-      <p>Fab15の実工程順・実配置の再現ではありません。後工程はこのモデルの対象外です。</p>
-      <div className="footer-actions"><button onClick={() => setShowAbout(true)}><Icon name="book" size={15} />公開資料・確認範囲</button>
-        <button onClick={save} disabled={saving}><Icon name="download" size={15} />{saving ? '保存中…' : 'GLBを保存'}</button></div>
+      <p>{text.footer}</p>
+      <div className="footer-actions"><button onClick={() => setShowAbout(true)}><Icon name="book" size={15} />{text.sourcesButton}</button>
+        <button onClick={save} disabled={saving}><Icon name="download" size={15} />{saving ? text.saving : text.save}</button></div>
     </footer>
-    <span className="save-status" role="status">{saveMessage}</span>
+    <span className="save-status" role="status">{saveMessage ? text[saveMessage] : ''}</span>
     {showAbout ? <AboutDialog onClose={() => setShowAbout(false)} /> : null}
   </div>;
 }

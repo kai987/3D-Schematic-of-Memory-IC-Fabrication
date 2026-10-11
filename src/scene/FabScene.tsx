@@ -4,14 +4,103 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildFab, STATION_POSITIONS } from './buildFab';
-import { stages, sources, disclaimer, MODEL_TITLE } from '../data/processes';
 import type { SimulationSnapshot } from '../hooks/useSimulation';
+import { useI18n } from '../i18n/LocaleContext';
+import type { Locale, Theme } from '../i18n/types';
 
 export type SceneView = 'all' | 'fab' | 'probe';
 export interface FabSceneHandle { reset: () => void; focus: (stage: number) => void; exportGLB: () => Promise<void> }
-interface Props { stage: number; showLabels: boolean; view: SceneView; snapshot: RefObject<SimulationSnapshot>; onSelect: (id: number) => void }
+interface Props { stage: number; showLabels: boolean; view: SceneView; theme: Theme; snapshot: RefObject<SimulationSnapshot>; onSelect: (id: number) => void }
 
-const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, showLabels, view, snapshot, onSelect }, ref) {
+interface SceneRuntime {
+  camera: THREE.OrthographicCamera;
+  controls: OrbitControls;
+  model: ReturnType<typeof buildFab>;
+  renderer: THREE.WebGLRenderer;
+  scene: THREE.Scene;
+  hemisphere: THREE.HemisphereLight;
+  sun: THREE.DirectionalLight;
+  fill: THREE.DirectionalLight;
+  floorMaterial: THREE.MeshStandardMaterial | null;
+  desiredTarget: THREE.Vector3;
+  desiredCamera: THREE.Vector3;
+  desiredZoom: number;
+  transitioning: boolean;
+}
+
+const exportNames: Record<Locale, string> = {
+  ja: '東広島Fab15_ウェーハ製造工程_公開資料模式モデル.glb',
+  en: 'Higashihiroshima_Fab15_Wafer_Fabrication_Public_Information_Model.glb',
+  zh: '东广岛Fab15_晶圆制造工程_公开资料示意模型.glb',
+};
+
+const modelMetadata: Record<Locale, { purpose: string; representation: string; numberMeaning: string }> = {
+  ja: { purpose: 'Fab15公開資料に基づく工程分類の学習用モデル', representation: '装置外観・寸法・配置は模式表現', numberMeaning: '工程IDは分類番号であり、実際の製造順序を示さない' },
+  en: { purpose: 'Learning model of process categories based on Fab15 public information', representation: 'Equipment appearance, dimensions and arrangement are schematic', numberMeaning: 'Process IDs identify categories, not the actual manufacturing order' },
+  zh: { purpose: '基于 Fab15 公开资料的工程分类学习模型', representation: '设备外观、尺寸与布置均为示意表达', numberMeaning: '工程 ID 是分类编号，不代表实际制造顺序' },
+};
+
+function localizeModel(group: THREE.Group, stations: THREE.Group[], localized: ReturnType<typeof useI18n>) {
+  const metadata = modelMetadata[localized.locale];
+  group.name = localized.modelTitle;
+  Object.assign(group.userData, {
+    title: localized.modelTitle, language: localized.locale, disclaimer: localized.disclaimer,
+    scope: localized.scopeNote, scopeNote: localized.scopeNote, modelPurpose: metadata.purpose,
+    representation: metadata.representation, classificationNumberMeaning: metadata.numberMeaning,
+    modelType: 'public-information-schematic', sources: localized.sources,
+    processes: localized.stages.map(s => ({
+      id: s.id, title: s.title, equipment: s.equipment, description: s.description,
+      evidenceStatus: s.evidenceStatus, evidenceLabel: localized.evidenceLabels[s.evidenceStatus],
+      evidenceStatement: s.evidenceStatement, unconfirmed: s.unconfirmed, sourceIds: s.sourceIds,
+    })),
+  });
+  stations.forEach((station, id) => {
+    const s = localized.stages[id];
+    station.name = `${String(id + 1).padStart(2, '0')} ${s.title}`;
+    Object.assign(station.userData, {
+      title: s.title, language: localized.locale, classification: s.title,
+      modelPurpose: metadata.purpose, representation: metadata.representation,
+      classificationNumberMeaning: metadata.numberMeaning,
+      equipment: s.equipment, phase: s.phase, evidenceStatus: s.evidenceStatus,
+      evidenceLabel: localized.evidenceLabels[s.evidenceStatus], evidenceStatement: s.evidenceStatement,
+      unconfirmed: s.unconfirmed, sourceIds: s.sourceIds,
+    });
+  });
+  // Internal Japanese names are stable lookup keys for the hoist and its cables.
+  for (const name of ['学習用クリーンルーム床・模式寸法', 'OHT搬送レール・模式配置', 'OHT・FOUP 搬送キャリア']) {
+    const object = group.getObjectByName(name);
+    if (object) object.userData.representation = metadata.representation;
+  }
+}
+
+function applyTheme(r: SceneRuntime, theme: Theme) {
+  const night = theme === 'night';
+  r.renderer.setClearColor(night ? '#101b2a' : '#e9eff2');
+  r.renderer.toneMappingExposure = night ? 0.94 : 0.98;
+  r.scene.environmentIntensity = night ? 0.5 : 1;
+  r.hemisphere.color.set(night ? 0x9cbee5 : 0xe5f5ff);
+  r.hemisphere.groundColor.set(night ? 0x172638 : 0x70848d);
+  r.hemisphere.intensity = night ? 1.05 : 1.6;
+  r.sun.color.set(night ? 0xd9e9ff : 0xffffff);
+  r.sun.intensity = night ? 2.05 : 2.6;
+  r.fill.color.set(night ? 0x87c9e4 : 0xd0e9f3);
+  r.fill.intensity = night ? 1.4 : 1.2;
+  if (r.floorMaterial) {
+    r.floorMaterial.color.set(night ? '#334b62' : '#d8e5eb');
+    r.floorMaterial.roughness = night ? 0.58 : 0.33;
+  }
+  r.model.highlights.forEach(highlight => {
+    (highlight.material as THREE.MeshBasicMaterial).color.set(night ? '#45dae0' : '#00afbc');
+  });
+}
+
+const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, showLabels, view, theme, snapshot, onSelect }, ref) {
+  const localized = useI18n();
+  const { locale, stages, text } = localized;
+  const liveI18n = useRef(localized);
+  liveI18n.current = localized;
+  const liveTheme = useRef(theme);
+  liveTheme.current = theme;
   const host = useRef<HTMLDivElement>(null);
   const labels = useRef<(HTMLButtonElement | null)[]>([]);
   const selection = useRef(onSelect);
@@ -22,11 +111,8 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
   liveLabels.current = showLabels;
   const liveView = useRef(view);
   liveView.current = view;
-  const runtime = useRef<{
-    camera: THREE.OrthographicCamera; controls: OrbitControls; model: ReturnType<typeof buildFab>;
-    desiredTarget: THREE.Vector3; desiredCamera: THREE.Vector3; desiredZoom: number; transitioning: boolean;
-  } | null>(null);
-  const [error, setError] = useState('');
+  const runtime = useRef<SceneRuntime | null>(null);
+  const [error, setError] = useState<'webglError' | 'contextLost' | null>(null);
   const [ready, setReady] = useState(false);
 
   const moveCamera = (target: THREE.Vector3, zoom: number) => {
@@ -50,10 +136,13 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     focus: id => moveCamera(new THREE.Vector3(...STATION_POSITIONS[id]).add(new THREE.Vector3(0, 1, 0)), 2.8),
     exportGLB: async () => {
       const r = runtime.current;
-      if (!r) throw new Error('3Dモデルを読み込み中です。');
+      if (!r) throw new Error(liveI18n.current.text.scene.exportLoading);
       const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
       // Selection ornaments are UI, not part of the saved scientific model.
       const copy = r.model.group.clone(true);
+      const localized = liveI18n.current;
+      const copiedStations = copy.children.filter((object): object is THREE.Group => object instanceof THREE.Group && typeof object.userData.stage === 'number');
+      localizeModel(copy, copiedStations, localized);
       copy.traverse(object => { if (object.name.startsWith('selection')) object.visible = false; });
       const savedCarrier = copy.getObjectByName('OHT・FOUP 搬送キャリア');
       if (savedCarrier) {
@@ -66,12 +155,17 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
           if (cable) { cable.position.y = -0.64; cable.scale.y = 0.4; }
         }
       }
-      const result = await new GLTFExporter().parseAsync(copy, { binary: true, onlyVisible: true });
-      if (!(result instanceof ArrayBuffer)) throw new Error('モデルの保存に失敗しました。');
+      let result: ArrayBuffer | object;
+      try {
+        result = await new GLTFExporter().parseAsync(copy, { binary: true, onlyVisible: true });
+      } catch {
+        throw new Error(liveI18n.current.text.scene.exportFailed);
+      }
+      if (!(result instanceof ArrayBuffer)) throw new Error(liveI18n.current.text.scene.exportFailed);
       const url = URL.createObjectURL(new Blob([result], { type: 'model/gltf-binary' }));
       const link = document.createElement('a');
       link.href = url;
-      link.download = '東広島Fab15_ウェーハ製造工程_公開資料模式モデル.glb';
+      link.download = exportNames[localized.locale];
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     },
@@ -83,7 +177,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     } catch {
-      setError('3Dを表示できません。WebGLに対応したブラウザで開いてください。工程説明は下から選択できます。');
+      setError('webglError');
       return;
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -95,7 +189,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
-    renderer.domElement.setAttribute('aria-label', '東広島Fab15の公開資料に基づくウェーハ製造の3D模式モデル。ドラッグで回転、ホイールで拡大縮小。');
+    renderer.domElement.setAttribute('aria-label', liveI18n.current.text.scene.canvasLabel);
     renderer.domElement.setAttribute('role', 'img');
     container.prepend(renderer.domElement);
     const scene = new THREE.Scene();
@@ -115,7 +209,8 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     const env = pmrem.fromScene(room, 0.04);
     scene.environment = env.texture;
     room.dispose();
-    scene.add(new THREE.HemisphereLight(0xe5f5ff, 0x70848d, 1.6));
+    const hemisphere = new THREE.HemisphereLight(0xe5f5ff, 0x70848d, 1.6);
+    scene.add(hemisphere);
     const sun = new THREE.DirectionalLight(0xffffff, 2.6);
     sun.position.set(-10, 25, 16);
     sun.castShadow = true;
@@ -128,20 +223,15 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     fill.position.set(20, 12, -8);
     scene.add(fill);
     const model = buildFab();
-    Object.assign(model.group.userData, { title: MODEL_TITLE, language: 'ja', disclaimer, modelType: 'public-information-schematic', sources,
-      processes: stages.map(s => ({ id: s.id, title: s.title, equipment: s.equipment, description: s.description,
-        evidenceStatus: s.evidenceStatus, evidenceStatement: s.evidenceStatement, unconfirmed: s.unconfirmed, sourceIds: s.sourceIds })) });
-    model.stations.forEach((station, id) => {
-      station.name = `${String(id + 1).padStart(2, '0')} ${stages[id].title}`;
-      Object.assign(station.userData, { title: stages[id].title, equipment: stages[id].equipment, phase: stages[id].phase,
-        evidenceStatus: stages[id].evidenceStatus, evidenceStatement: stages[id].evidenceStatement,
-        unconfirmed: stages[id].unconfirmed, sourceIds: stages[id].sourceIds });
-    });
+    localizeModel(model.group, model.stations, liveI18n.current);
     for (const part of model.movingParts) part.object.userData.baseX = part.object.position.x;
     const payload = model.carrier.getObjectByName('FOUP昇降部');
     const cables = ['昇降ケーブル左', '昇降ケーブル右'].map(name => model.carrier.getObjectByName(name)).filter((object): object is THREE.Object3D => !!object);
     scene.add(model.group);
-    runtime.current = { camera, controls, model, desiredTarget: controls.target.clone(), desiredCamera: camera.position.clone(), desiredZoom: 1, transitioning: false };
+    const floor = model.group.getObjectByName('学習用クリーンルーム床・模式寸法');
+    const floorMaterial = floor instanceof THREE.Mesh && floor.material instanceof THREE.MeshStandardMaterial ? floor.material : null;
+    runtime.current = { camera, controls, model, renderer, scene, hemisphere, sun, fill, floorMaterial, desiredTarget: controls.target.clone(), desiredCamera: camera.position.clone(), desiredZoom: 1, transitioning: false };
+    applyTheme(runtime.current, liveTheme.current);
 
     const resize = () => {
       const { width, height } = container.getBoundingClientRect();
@@ -174,7 +264,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
     controls.addEventListener('start', cancelTransition);
     renderer.domElement.addEventListener('pointerdown', pointerDown);
     renderer.domElement.addEventListener('pointerup', pointerUp);
-    const contextLost = (e: Event) => { e.preventDefault(); setError('3Dの描画が中断されました。ページを再読み込みしてください。'); };
+    const contextLost = (e: Event) => { e.preventDefault(); setError('contextLost'); };
     renderer.domElement.addEventListener('webglcontextlost', contextLost);
     let raf = 0;
     const projected = new THREE.Vector3();
@@ -236,7 +326,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
       const width = container.clientWidth, height = container.clientHeight;
       const placed: { x: number; y: number; width: number }[] = [];
       // Selected label is retained, then hide only labels that collide after orbit/zoom.
-      const order = [liveStage.current, ...stages.map(s => s.id).filter(id => id !== liveStage.current)];
+      const order = [liveStage.current, ...liveI18n.current.stages.map(s => s.id).filter(id => id !== liveStage.current)];
       for (const id of order) {
         const label = labels.current[id];
         if (!label) continue;
@@ -268,6 +358,17 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
   }, [snapshot]);
 
   useEffect(() => {
+    if (runtime.current) applyTheme(runtime.current, theme);
+  }, [theme, ready]);
+
+  useEffect(() => {
+    const r = runtime.current;
+    if (!r) return;
+    localizeModel(r.model.group, r.model.stations, liveI18n.current);
+    r.renderer.domElement.setAttribute('aria-label', liveI18n.current.text.scene.canvasLabel);
+  }, [locale, ready]);
+
+  useEffect(() => {
     if (!ready) return;
     if (view === 'all') moveCamera(new THREE.Vector3(0, 1.1, 0), 1);
     else if (view === 'fab') moveCamera(new THREE.Vector3(-1.5, 1.1, 0), 1.15);
@@ -275,12 +376,12 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, sh
   }, [view, ready]);
 
   return <div className="scene-host" ref={host} data-ready={ready ? 'true' : 'false'}>
-    {!ready && !error ? <div className="scene-loading">3Dモデルを準備しています…</div> : null}
-    {error ? <div className="scene-error" role="alert">{error}</div> : null}
-    <div className="scene-labels" aria-label="装置を選択">
+    {!ready && !error ? <div className="scene-loading">{text.scene.loading}</div> : null}
+    {error ? <div className="scene-error" role="alert">{text.scene[error]}</div> : null}
+    <div className="scene-labels" aria-label={text.scene.selectEquipment}>
       {stages.map(s => <button key={s.id} ref={element => { labels.current[s.id] = element; }}
         onClick={() => selection.current(s.id)} className={`machine-label ${s.id === stage ? 'selected' : ''}`}
-        aria-label={`${s.id + 1}. ${s.title}の装置`} aria-pressed={s.id === stage} style={{ display: 'none' }}>
+        aria-label={`${s.id + 1}. ${s.title} · ${text.scene.equipment}`} aria-pressed={s.id === stage} style={{ display: 'none' }}>
         <span>{String(s.id + 1).padStart(2, '0')}</span>{s.shortTitle}
       </button>)}
     </div>
