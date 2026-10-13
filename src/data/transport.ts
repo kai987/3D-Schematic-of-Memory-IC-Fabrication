@@ -1,4 +1,5 @@
 import type { Locale } from '../i18n/types.ts';
+import type { ModelProfile } from './modelProfiles.ts';
 
 export type TransportItemId = 'oht' | 'foup';
 
@@ -143,6 +144,26 @@ const transportContent: Record<Locale, TransportContent> = {
   },
 };
 
-export function getTransportContent(locale: Locale): TransportContent {
-  return transportContent[locale];
+const kioxiaScope: Record<Locale, { oht: string; foup: string }> = {
+  ja: {
+    oht: '四日市の公式スマートファクトリー紹介はOHTによる自動搬送を説明しています。黄色の軌道、台車、支持構造、配置、経路、昇降の形状・時間は学習用の模式表現であり、実際の設備を再現していません。',
+    foup: 'FOUPの役割を説明する一般例です。四日市の公式資料は自動搬送を紹介していますが、この容器の色・形状・寸法・型式・容量・収納枚数は確認できず、模式表現です。',
+  },
+  en: {
+    oht: 'The official Yokkaichi smart-factory page describes automated OHT transport. The yellow rails, trolley, supports, layout, routing and hoist geometry and timing are learning illustrations, not reproductions of the actual equipment.',
+    foup: 'This is a generic illustration of a FOUP and its role. The official Yokkaichi source describes automated transport, but does not establish the illustrated container color, shape, dimensions, type, capacity or wafer count.',
+  },
+  zh: {
+    oht: '四日市官方智能工厂介绍说明了OHT自动搬运。黄色轨道、小车、支撑结构、布局、路线、升降形状与时间均为学习示意，并未还原真实设备。',
+    foup: '这是说明FOUP作用的通用示例。四日市官方资料介绍了自动搬运，但未确认图中容器的颜色、形状、尺寸、型号、容量与晶圆数量，均按示意表达。',
+  },
+};
+
+export function getTransportContent(locale: Locale, profile: ModelProfile = 'micron'): TransportContent {
+  const content = transportContent[locale];
+  if (profile === 'micron') return content;
+  return { ...content, items: {
+    oht: { ...content.items.oht, scopeNote: kioxiaScope[locale].oht, sourceIds: ['kioxia-yokkaichi-smart'] },
+    foup: { ...content.items.foup, scopeNote: kioxiaScope[locale].foup, sourceIds: ['kioxia-yokkaichi-smart'] },
+  } };
 }

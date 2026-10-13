@@ -18,7 +18,7 @@
   --transport-line: #edc469;
 }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; }
+body { margin: 0; min-width: 0; }
 button, input, select { font: inherit; }
 button { color: inherit; cursor: pointer; }
 button, select { -webkit-tap-highlight-color: transparent; }
@@ -40,6 +40,8 @@ h1 { margin: 0; font-size: clamp(22px, 2.3vw, 34px); font-weight: 700; letter-sp
 .theme-control button.active { color: #fff; background: var(--teal); }
 .theme-control button:not(.active):hover { background: var(--pale); }
 .language-control select { min-height: 40px; padding: 6px 10px; border: 1px solid var(--control-border); border-radius: 6px; color: var(--navy); background: var(--soft-surface); font-size: 12px; cursor: pointer; }
+.model-control { min-width: 0; width: 250px; margin-left: auto; }
+.model-control select { width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid var(--control-border); border-radius: 6px; color: var(--navy); background: var(--soft-surface); font-size: 12px; cursor: pointer; }
 .scope-banner { display: flex; align-items: center; gap: 18px; padding: 10px 32px; background: #f0f7f8; border-bottom: 1px solid var(--border); color: #405f74; font-size: 11px; line-height: 1.7; }
 .scope-banner strong { flex-shrink: 0; color: #006b76; font-size: 11px; }
 .scope-banner p { margin: 0; }
@@ -207,7 +209,7 @@ h1 { margin: 0; font-size: clamp(22px, 2.3vw, 34px); font-weight: 700; letter-sp
 @media (min-width: 1600px) { .workspace { grid-template-columns: minmax(0, 1fr) 370px; } .inspector { padding: 24px 28px; } }
 @media (max-width: 1200px) {
   .workspace { grid-template-columns: minmax(0, 1fr) 302px; }
-  .app-header { gap: 18px; padding: 15px 24px; }
+  .app-header { gap: 18px; padding: 15px 24px; flex-wrap: wrap; }
   .scope-banner { padding: 10px 24px; gap: 12px; }
   .subtitle { font-size: 13px; }
   .header-description { max-width: 210px; }
@@ -243,6 +245,7 @@ h1 { margin: 0; font-size: clamp(22px, 2.3vw, 34px); font-weight: 700; letter-sp
   .brand > svg { width: 29px; height: 29px; }
   h1 { font-size: 23px; }
   .brand { width: 100%; }
+  .model-control { width: 100%; margin-left: 0; }
   .display-controls { margin-left: 0; width: 100%; justify-content: space-between; }
   .theme-control button { min-height: 34px; padding: 6px 13px; }
   .language-control select { min-height: 42px; }

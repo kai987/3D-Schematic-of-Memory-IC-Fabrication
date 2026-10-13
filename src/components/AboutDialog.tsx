@@ -1,10 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { DEMO_ROUTE } from '../data/processes';
 import { useI18n } from '../i18n/LocaleContext';
 import Icon from './Icon';
 
 export default function AboutDialog({ onClose }: { onClose: () => void }) {
-  const { disclaimer, sources, stages, evidenceLabels, text: { about: text } } = useI18n();
+  const { disclaimer, sources, stages, evidenceLabels, demoRoute, text: { about: text } } = useI18n();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
   return <dialog ref={ref} className="about-dialog" onCancel={onClose} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
@@ -21,8 +20,8 @@ export default function AboutDialog({ onClose }: { onClose: () => void }) {
     <h3>{text.comparisonTitle}</h3><p>{text.comparisonIntro}</p><ul>{text.comparison.map(item => <li key={item}>{item}</li>)}</ul>
     <h3>{text.controlsTitle}</h3>
     <p>{text.controls}</p>
-    <p>{text.routeIntro}{DEMO_ROUTE.length}{text.routeEnd}</p>
-    <details className="route-details"><summary>{text.route}</summary><p>{DEMO_ROUTE.map(id => stages[id].shortTitle).join(' → ')}</p></details>
+    <p>{text.routeIntro}{demoRoute.length}{text.routeEnd}</p>
+    <details className="route-details"><summary>{text.route}</summary><p>{demoRoute.map(id => stages[id].shortTitle).join(' → ')}</p></details>
     <h3>{text.exportTitle}</h3>
     <p>{text.export}</p>
     <h3>{text.sourcesTitle}</h3>

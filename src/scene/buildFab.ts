@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { optimizeStaticMeshes } from './optimizeStaticMeshes.ts';
 import type { StaticBatchStats } from './optimizeStaticMeshes.ts';
+import type { ModelProfile } from '../data/modelProfiles.ts';
 
 export const STATION_POSITIONS: [number, number, number][] = [
   [-10, 0, -4], [-5, 0, -4], [0, 0, -4], [5, 0, -4], [10, 0, -4],
@@ -9,6 +10,7 @@ export const STATION_POSITIONS: [number, number, number][] = [
 ];
 
 export interface FabModel {
+  profile: ModelProfile;
   group: THREE.Group;
   stations: THREE.Group[];
   labelAnchors: THREE.Vector3[];
@@ -21,11 +23,15 @@ export interface FabModel {
   dispose: () => void;
 }
 
-/** Process classifications for a Fab15 public-information learning model, in a schematic layout. */
-export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean } = {}): FabModel {
+/** Public-information process categories, with equipment and samples shown schematically. */
+export function buildFab({ optimizeStatic = true, profile = 'micron' }: { optimizeStatic?: boolean; profile?: ModelProfile } = {}): FabModel {
+  const nand = profile === 'kioxia';
+  const facility = nand ? 'キオクシア四日市工場' : 'Fab15';
   const group = new THREE.Group();
-  group.name = 'Fab15 — ウェーハ製造工程分類・公開資料学習モデル';
-  group.userData.modelPurpose = 'Fab15公開資料に基づく工程分類の学習用モデル';
+  group.name = nand ? 'キオクシア四日市 — BiCS FLASH™・公開資料学習モデル' : 'Fab15 — ウェーハ製造工程分類・公開資料学習モデル';
+  group.userData.profile = profile;
+  group.userData.memoryTechnology = nand ? 'BiCS FLASH™・3次元NANDフラッシュメモリ（模式表現）' : 'DRAM（模式表現）';
+  group.userData.modelPurpose = `${facility}公開資料に基づく工程分類の学習用モデル`;
   group.userData.representation = '装置外観・寸法・配置は模式表現';
   group.userData.classificationNumberMeaning = '工程IDは分類番号であり、実際の製造順序を示さない';
   group.userData.scope = 'ウェーハ製造工程の分類。切断・組立・封止・製品最終試験は含まない';
@@ -231,10 +237,59 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
     box(parent, w + 0.07, 0.06, d + 0.07, x, y - h / 2, z, palette.steel);
   };
 
+  // These enlarged samples explain BiCS FLASH principles. They are separate
+  // from the generic equipment and do not depict a product layer count,
+  // material recipe, dimension, or the inside of an installed production tool.
+  const nandSample = (parent: THREE.Object3D, x: number, y: number, z: number, kind: 'stack' | 'holes' | 'channels') => {
+    const sample = new THREE.Group();
+    sample.position.set(x, y, z);
+    sample.name = kind === 'stack' ? '多層膜スタック・拡大模式標本' : kind === 'holes' ? '垂直開孔・拡大模式標本' : '垂直チャネル・ワードライン・拡大模式標本';
+    sample.userData.role = 'nand-schematic';
+    sample.userData.schematicFeature = kind;
+    sample.userData.representation = '学習用の拡大模式標本。実際の層数・寸法・材料・装置内構造は再現しない';
+    sample.userData.sourceUrls = ['https://www.kioxia.com/ja-jp/rd/technology/bics-flash.html'];
+    parent.add(sample);
+    const width = 1.04, depth = 0.78, pitch = 0.09, pairs = 6;
+    const contacts: [number, number, number][] = [];
+    for (const cx of [-0.29, 0, 0.29]) for (const cz of [-0.19, 0.19]) contacts.push([cx, 0, cz]);
+    const plate = cached(`nand-plate:${kind === 'stack' ? 'solid' : 'holes'}`, () => {
+      if (kind === 'stack') return new THREE.BoxGeometry(width, 0.031, depth);
+      const shape = new THREE.Shape();
+      shape.moveTo(-width / 2, -depth / 2); shape.lineTo(width / 2, -depth / 2);
+      shape.lineTo(width / 2, depth / 2); shape.lineTo(-width / 2, depth / 2); shape.closePath();
+      for (const [cx, , cz] of contacts) {
+        const hole = new THREE.Path();
+        hole.absarc(cx, cz, 0.065, 0, Math.PI * 2, true);
+        shape.holes.push(hole);
+      }
+      const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.031, bevelEnabled: false, steps: 1, curveSegments: 12 });
+      geometry.rotateX(-Math.PI / 2);
+      return geometry;
+    });
+    const dielectric: [number, number, number][] = [], gates: [number, number, number][] = [];
+    for (let i = 0; i < pairs; i++) {
+      dielectric.push([0, i * pitch + 0.046, 0]);
+      gates.push([0, i * pitch, 0]);
+      // The exposed edge makes the stacked horizontal electrodes readable.
+      box(sample, 0.14 + i * 0.016, 0.022, 0.12, -0.53 - i * 0.008, i * pitch + 0.005, 0.25, palette.gold, false);
+    }
+    repeated(sample, plate, palette.light, dielectric).name = '絶縁層・省略模式';
+    repeated(sample, plate, palette.gold, gates).name = '水平電極層・省略模式';
+    box(sample, width + 0.1, 0.045, depth + 0.1, 0, -0.05, 0, palette.silicon, false);
+    if (kind === 'channels') {
+      const height = pairs * pitch + 0.08;
+      const channelPositions = contacts.map(([cx, , cz]) => [cx, height / 2 - 0.015, cz] as [number, number, number]);
+      repeated(sample, cached('nand-charge-storage', () => new THREE.CylinderGeometry(0.046, 0.046, height, 16)), palette.tintedGlass, channelPositions).name = '電荷蓄積膜・柱状模式';
+      repeated(sample, cached('nand-channel', () => new THREE.CylinderGeometry(0.023, 0.023, height + 0.075, 16)), palette.teal, channelPositions).name = '垂直チャネル・柱状模式';
+      for (const [cx, , cz] of contacts) ring(sample, 0.06, 0.009, cx, height - 0.001, cz, palette.bright);
+    }
+    return sample;
+  };
+
   // The tiled plinth is separate from the tools so that the layout reads clearly.
   const floor = box(group, 27, 0.24, 14.8, 0, -0.17, 0, palette.floor);
   floor.name = '学習用クリーンルーム床・模式寸法';
-  floor.userData.representation = '装置配置を説明するための模式床。Fab15の実配置・実寸を示さない';
+  floor.userData.representation = `装置配置を説明するための模式床。${facility}の実配置・実寸を示さない`;
   const tileXs: [number, number, number][] = [];
   const tileZs: [number, number, number][] = [];
   for (let x = -12; x <= 12; x += 2) tileXs.push([x, -0.041, 0]);
@@ -251,7 +306,9 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
   box(group, 26.5, 0.08, 0.1, 0, 2.92, -7.07, palette.steel);
   box(group, 26.5, 0.08, 0.1, 0, 0.15, -7.07, palette.steel);
 
-  const japaneseNames = ['搬入・ウェーハ供給', '洗浄', '成膜', '露光', 'エッチング', 'イオン注入・熱処理', 'CMP', '計測', 'ウェーハ電気検査'];
+  const japaneseNames = nand
+    ? ['搬入・ウェーハ搬送', '洗浄', '多層膜形成', '露光', '高アスペクト比加工', 'メモリセル・ワードライン形成', 'CMP', 'CBA・ウェーハ接合', 'ウェーハ検査']
+    : ['搬入・ウェーハ供給', '洗浄', '成膜', '露光', 'エッチング', 'イオン注入・熱処理', 'CMP', '計測', 'ウェーハ電気検査'];
   const stations = STATION_POSITIONS.map((position, i) => {
     const station = new THREE.Group();
     station.name = `${String(i + 1).padStart(2, '0')} ${japaneseNames[i]}`;
@@ -331,6 +388,7 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
     monitor(s, 1.48, 1.72, 0.92, 0.68);
     statusTower(s, -1.51, 1.98, -1.1);
     wafer(s, 0, 1.9, -0.1, 0.46);
+    if (nand) nandSample(s, 0, 1.98, -0.1, 'stack');
   }
   // 04 — Lithography scanner paired with the resist coat/develop track.
   {
@@ -370,9 +428,10 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
     statusTower(s, 1.25, 2.49, -0.6);
     box(s, 0.27, 0.08, 0.016, 1.28, 2.07, 0.242, palette.teal);
     cylinder(s, 0.24, 0.63, -1.45, 0.6, -1.07, palette.steel);
+    if (nand) nandSample(s, -0.3, 2.18, 0.59, 'holes');
   }
-  // 06 — Ion beamline and a vertical anneal furnace (combined learning station).
-  {
+  // 06 — DRAM beamline/thermal treatment or a NAND cell-formation schematic.
+  if (!nand) {
     const s = stations[5];
     box(s, 2.42, 1.26, 1.39, -0.4, 0.86, 0.11, palette.white);
     box(s, 2.48, 0.09, 1.45, -0.4, 1.53, 0.11, palette.steel);
@@ -393,6 +452,22 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
     monitor(s, 1.44, 1.46, 0.32, 0.68);
     statusTower(s, 1.44, 2.66, -0.62);
     pipe(s, [[0.52, 2.2, -0.3], [0.52, 2.57, -0.3], [1.1, 2.63, -0.3]], 0.05);
+  } else {
+    const s = stations[5];
+    cabinet(s, 1.36, -0.28, 0.72, 2.26, 1.7);
+    box(s, 2.53, 1.12, 1.68, -0.4, 0.74, -0.08, palette.white);
+    box(s, 2.6, 0.1, 1.74, -0.4, 1.34, -0.08, palette.steel);
+    chamber(s, -1.02, -0.62, 0.44, 1.46);
+    chamber(s, 0.18, -0.62, 0.44, 1.46);
+    rod(s, new THREE.Vector3(-0.68, 1.38, -0.62), new THREE.Vector3(-0.18, 1.38, -0.62), 0.13, palette.bright);
+    glassFrame(s, -0.38, 1.93, 0.38, 1.54, 0.96, 0.88);
+    const sample = nandSample(s, -0.38, 1.57, 0.43, 'channels');
+    sample.userData.equipmentRelation = '構造を学ぶための拡大表示。装置内の実際の処理対象・配置を示さない';
+    loadport(s, 0.53, 1.46, false);
+    monitor(s, 1.36, 1.68, 0.61, 0.73);
+    statusTower(s, 1.34, 2.45, -0.65);
+    for (const x of [-1.06, -0.36]) vent(s, x, 0.54, 0.79, 0.52, 0.28);
+    pipe(s, [[-1.02, 1.85, -0.62], [-1.02, 2.37, -0.89], [0.28, 2.37, -0.89]], 0.036, palette.teal);
   }
   // 07 — Chemical mechanical polishing: exposed polishing bowls and carriers.
   {
@@ -416,8 +491,8 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
     for (const x of [-1.03, -0.15]) vent(s, x, 0.52, 0.89, 0.63, 0.35);
     loadport(s, 0.53, 1.45);
   }
-  // 08 — Optical metrology: a visible wafer stage below a microscope objective.
-  {
+  // 08 — DRAM optical metrology or a generic NAND CBA wafer-alignment tool.
+  if (!nand) {
     const s = stations[7];
     cabinet(s, -1.35, -0.06, 0.6, 2.27, 1.74);
     box(s, 2.31, 1.13, 1.79, 0.24, 0.77, -0.06, palette.white);
@@ -435,6 +510,37 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
     monitor(s, 1.09, 1.1, 0.95, 0.8);
     statusTower(s, -1.35, 2.49, -0.45);
     vent(s, 0.77, 0.58, 0.857, 0.63, 0.32);
+  } else {
+    const s = stations[7];
+    cabinet(s, -1.38, -0.18, 0.55, 2.26, 1.67);
+    box(s, 2.42, 1.08, 1.81, 0.23, 0.76, -0.08, palette.white);
+    box(s, 2.49, 0.09, 1.9, 0.23, 1.35, -0.08, palette.steel);
+    glassFrame(s, 0.22, 2.04, -0.02, 2.27, 1.3, 1.72);
+    for (const x of [-0.57, 1.04]) cylinder(s, 0.048, 1.07, x, 1.96, -0.55, palette.bright);
+    box(s, 1.76, 0.13, 0.43, 0.23, 2.5, -0.55, palette.steel);
+    cylinder(s, 0.11, 0.22, 0.23, 2.33, 0.1, palette.dark);
+    cylinder(s, 0.58, 0.12, 0.23, 1.5, 0.1, palette.steel);
+    const cmos = wafer(s, 0.23, 1.6, 0.1, 0.48);
+    cmos.name = 'CMOSウェーハ・CBA模式';
+    cmos.userData.schematicFeature = 'cba-cmos-wafer';
+    const array = new THREE.Group(); array.position.set(0.23, 2.05, 0.1); s.add(array);
+    array.name = 'セルアレイウェーハ・CBA対向模式';
+    array.userData.schematicFeature = 'cba-array-wafer';
+    array.userData.representation = '上下のウェーハと間隔は貼り合わせを説明する模式表現。実寸・装置構成・接合条件は再現しない';
+    array.userData.sourceUrls = ['https://www.kioxia.com/ja-jp/rd/technology/cba.html'];
+    ring(array, 0.54, 0.038, 0, 0.11, 0, palette.bright);
+    wafer(array, 0, 0.025, 0, 0.48, false);
+    const pads: [number, number, number][] = [];
+    for (const px of [-0.24, -0.08, 0.08, 0.24]) for (const pz of [-0.24, -0.08, 0.08, 0.24]) {
+      if (px * px + pz * pz < 0.15) pads.push([px, 0.027, pz]);
+    }
+    repeated(cmos, cached('cba-pad', () => new THREE.BoxGeometry(0.052, 0.014, 0.052)), palette.gold, pads).name = 'CMOS側Cu接合パッド・模式';
+    repeated(array, cached('cba-pad', () => new THREE.BoxGeometry(0.052, 0.014, 0.052)), palette.gold, pads.map(([px, , pz]) => [px, 0.002, pz])).name = 'セルアレイ側Cu接合パッド・模式';
+    movingParts.push({ object: array, kind: 'scan', stage: 7 });
+    loadport(s, -0.33, 1.44);
+    monitor(s, 1.09, 1.16, 0.99, 0.8);
+    statusTower(s, -1.37, 2.46, -0.51);
+    vent(s, 0.81, 0.56, 0.84, 0.58, 0.3);
   }
   // 09 — Wafer prober: wafer chuck, probe card and fine alignment mechanics.
   {
@@ -459,11 +565,11 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
     vent(s, -0.73, 0.5, 0.94, 0.79, 0.27);
     statusTower(s, 1.16, 2.72, -0.66);
   }
-  // Generic OHT/FOUP demonstration; this route is not a reconstruction of Fab15.
+  // Generic OHT/FOUP demonstration, never a reconstruction of the named fab.
   const rail = new THREE.Group();
   rail.name = 'OHT搬送レール・模式配置';
   rail.userData.transportItem = 'oht';
-  rail.userData.representation = 'OHT・FOUP搬送の一般的な模式表現。Fab15の実経路・実寸を示さない';
+  rail.userData.representation = `OHT・FOUP搬送の一般的な模式表現。${facility}の実経路・実寸を示さない`;
   group.add(rail);
   const railPoints = [
     [-12, 4.5, -2], [12, 4.5, -2], [12, 4.5, 2], [-12, 4.5, 2], [-12, 4.5, -2],
@@ -523,7 +629,8 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
     station.userData.stage = stage;
     station.userData.classificationNumber = stage + 1;
     station.userData.classification = japaneseNames[stage];
-    station.userData.modelPurpose = 'Fab15公開資料に基づく工程分類';
+    station.userData.profile = profile;
+    station.userData.modelPurpose = `${facility}公開資料に基づく工程分類`;
     station.userData.representation = '装置外観・寸法・配置は模式表現';
     station.userData.classificationNumberMeaning = '分類番号。実際の工程順序ではない';
     station.traverse(child => {
@@ -552,7 +659,7 @@ export function buildFab({ optimizeStatic = true }: { optimizeStatic?: boolean }
   }
 
   return {
-    group, stations, labelAnchors, carrier, rail, highlights, movingParts, railPoints, batching,
+    profile, group, stations, labelAnchors, carrier, rail, highlights, movingParts, railPoints, batching,
     dispose: () => {
       geometries.forEach(geometry => geometry.dispose());
       materials.forEach(material => material.dispose());

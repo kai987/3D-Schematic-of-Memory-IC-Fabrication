@@ -7,9 +7,9 @@ import { getTransportContent } from '../data/transport';
 import type { TransportItemId } from '../data/transport';
 
 export default memo(function Inspector({ stage, onFocus, transport, onDismissTransport }: { stage: number; onFocus: () => void; transport: TransportItemId | null; onDismissTransport: () => void }) {
-  const { locale, stages, sources, evidenceLabels, text: { inspector: text } } = useI18n();
+  const { locale, profile, stages, sources, evidenceLabels, text: { inspector: text } } = useI18n();
   const selected = stages[stage];
-  return <aside className="inspector" aria-label={transport ? getTransportContent(locale).selectionLabel : text.label} data-transport-selection={transport ?? undefined}>
+  return <aside className="inspector" aria-label={transport ? getTransportContent(locale, profile).selectionLabel : text.label} data-transport-selection={transport ?? undefined}>
     {transport ? <TransportInspector itemId={transport} onBack={onDismissTransport} /> : null}
     <div hidden={transport !== null}>
     <div className="step-number"><strong>{String(stage + 1).padStart(2, '0')}</strong><span>/ {String(stages.length).padStart(2, '0')} {text.categories}</span></div>

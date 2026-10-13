@@ -7,7 +7,7 @@ import type { FabModel } from './buildFab.ts';
  * shares no geometry or material with the live scene and is always released.
  */
 export async function exportFabGLB(source: FabModel, localize: (model: FabModel) => void): Promise<ArrayBuffer> {
-  const saved = buildFab({ optimizeStatic: false });
+  const saved = buildFab({ optimizeStatic: false, profile: source.profile });
   try {
     // Capture the visible state before the first await, so playback cannot
     // change the pose halfway through preparing an export.

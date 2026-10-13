@@ -4,8 +4,8 @@ import type { TransportItemId } from '../data/transport';
 import Icon from './Icon';
 
 export default function TransportInspector({ itemId, onBack }: { itemId: TransportItemId; onBack: () => void }) {
-  const { locale, sources } = useI18n();
-  const content = getTransportContent(locale);
+  const { locale, profile, sources } = useI18n();
+  const content = getTransportContent(locale, profile);
   const item = content.items[itemId];
   return <div className="transport-inspector" data-transport={itemId}>
     <p className="transport-category"><Icon name="tag" size={15} />{content.category}</p>

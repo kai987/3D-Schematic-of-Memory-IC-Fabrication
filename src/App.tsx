@@ -10,6 +10,8 @@ import { useSimulation } from './hooks/useSimulation';
 import { useI18n } from './i18n/LocaleContext';
 import type { Locale } from './i18n/types';
 import type { TransportItemId } from './data/transport';
+import { profileLabels } from './data/modelProfiles';
+import type { ModelProfile } from './data/modelProfiles';
 
 function revealInspector() {
   requestAnimationFrame(() => {
@@ -20,9 +22,14 @@ function revealInspector() {
 }
 
 export default function App() {
-  const { text, locale, setLocale, theme, setTheme, scopeNote } = useI18n();
+  const { profile } = useI18n();
+  return <FactoryWorkspace key={profile} />;
+}
+
+function FactoryWorkspace() {
+  const { text, locale, setLocale, theme, setTheme, profile, setProfile, demoRoute, scopeNote } = useI18n();
   const [sceneAvailable, setSceneAvailable] = useState(true);
-  const simulation = useSimulation(!sceneAvailable);
+  const simulation = useSimulation(!sceneAvailable, demoRoute);
   const scene = useRef<FabSceneHandle>(null);
   const [view, setView] = useState<SceneView>('all');
   const [showLabels, setShowLabels] = useState(true);
@@ -62,6 +69,10 @@ export default function App() {
     <header className="app-header">
       <div className="brand"><Icon name="chip" size={48} /><h1>{text.brand}</h1></div>
       <div className="header-description"><p className="subtitle">{text.subtitle}</p><p className="model-kind">{text.modelKind}</p></div>
+      <label className="model-control"><span className="sr-only">{profileLabels[locale].label}</span><select aria-label={profileLabels[locale].label} value={profile} onChange={event => setProfile(event.target.value as ModelProfile)}>
+        <option value="kioxia">{profileLabels[locale].kioxia}</option>
+        <option value="micron">{profileLabels[locale].micron}</option>
+      </select></label>
       <div className="display-controls">
         <div className="theme-control" role="group" aria-label={text.appearance}>
           {(['day', 'night'] as const).map(value => <button key={value} onClick={() => setTheme(value)} aria-pressed={theme === value} className={theme === value ? 'active' : ''}><Icon name={value === 'day' ? 'sun' : 'moon'} size={16} /><span>{text[value]}</span></button>)}

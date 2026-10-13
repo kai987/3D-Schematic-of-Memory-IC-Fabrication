@@ -20,9 +20,9 @@ function glbJSON(buffer) {
   return JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 20, new DataView(buffer).getUint32(12, true))));
 }
 
-function localizer(locale) {
-  const content = getProcessContent(locale);
-  const transport = getTransportContent(locale);
+function localizer(locale, profile = 'micron') {
+  const content = getProcessContent(locale, profile);
+  const transport = getTransportContent(locale, profile);
   return model => {
     model.group.name = content.modelTitle;
     Object.assign(model.group.userData, {
@@ -202,6 +202,59 @@ test('all three compact GLBs keep nine localized categories, thirteen sources, e
       assert.ok(json.nodes.some(node => node.name?.includes('模式部品')));
       assert.ok(!json.nodes.some(node => node.name?.startsWith('selection-') || node.extras?.role === 'opaque-static-batch'));
       assert.ok(json.extensionsUsed.includes('EXT_mesh_gpu_instancing'));
+    }
+  } finally { source.dispose(); }
+});
+
+test('the compact export helper retains KIOXIA NAND geometry and localized nine-stage/eight-source metadata', async () => {
+  const source = buildFab({ profile: 'kioxia' });
+  const arrayPose = source.movingParts.find(part => part.stage === 7).object;
+  arrayPose.position.x += 0.16;
+  try {
+    for (const locale of ['ja', 'en', 'zh']) {
+      let loaded;
+      try {
+        const content = getProcessContent(locale, 'kioxia');
+        const buffer = await exportFabGLB(source, localizer(locale, 'kioxia'));
+        const json = glbJSON(buffer);
+        const root = json.nodes.find(node => node.extras?.sources);
+        assert.equal(root.extras.profile, 'kioxia', 'the helper must construct the source profile, not its Micron default');
+        assert.match(root.extras.memoryTechnology, /BiCS FLASH/u);
+        assert.equal(root.name, content.modelTitle);
+        assert.equal(root.extras.language, locale);
+        assert.equal(root.extras.sources.length, 8);
+        assert.deepEqual(root.extras.sources, content.sources);
+        const stations = json.nodes.filter(node => node.extras?.classificationNumber !== undefined);
+        assert.equal(stations.length, 9);
+        stations.forEach((station, i) => {
+          assert.equal(station.extras.title, content.stages[i].title);
+          assert.deepEqual(station.extras.sourceIds, content.stages[i].sourceIds);
+          assert.deepEqual(station.extras.unconfirmed, content.stages[i].unconfirmed);
+        });
+        assert.equal(json.nodes.filter(node => node.name === 'FOUP容器').length, 8);
+
+        loaded = (await new GLTFLoader().parseAsync(buffer, '')).scene;
+        loaded.updateMatrixWorld(true);
+        const samples = new Map();
+        loaded.traverse(object => {
+          if (object.userData.schematicFeature) samples.set(object.userData.schematicFeature, object);
+        });
+        assert.ok(samples.get('stack')?.children.some(object => object.isInstancedMesh), 'the actual multilayer stack must survive serialization');
+        const etched = samples.get('holes');
+        assert.ok(etched, 'the vertical-hole sample must not be replaced by DRAM geometry');
+        const layers = etched.children.filter(object => object.isInstancedMesh);
+        const down = new THREE.Vector3(0, -1, 0);
+        const hole = etched.localToWorld(new THREE.Vector3(0, 1, 0.19));
+        const solid = etched.localToWorld(new THREE.Vector3(0.12, 1, 0));
+        assert.equal(new THREE.Raycaster(hole, down).intersectObjects(layers, false).length, 0);
+        assert.ok(new THREE.Raycaster(solid, down).intersectObjects(layers, false).length > 0, 'real holes, not an empty placeholder');
+        assert.ok(samples.get('channels')?.getObjectByName('垂直チャネル・柱状模式')?.isInstancedMesh);
+        const cmos = samples.get('cba-cmos-wafer');
+        const array = samples.get('cba-array-wafer');
+        assert.ok(cmos && array, 'both separately represented CBA wafers must survive export');
+        assert.ok(array.position.y > cmos.position.y);
+        closeVector(array.position, arrayPose.position);
+      } finally { if (loaded) disposeLoaded(loaded); }
     }
   } finally { source.dispose(); }
 });

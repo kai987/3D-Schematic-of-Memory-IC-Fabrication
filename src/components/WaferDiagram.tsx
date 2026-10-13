@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import { useI18n } from '../i18n/LocaleContext';
 import { waferLabels } from '../data/waferLabels';
+import NandWaferDiagram from './NandWaferDiagram';
 
 type LeaderProps = { x: number; y: number; endX: number; endY: number; label: string };
 
@@ -17,9 +18,10 @@ function Leader({ x, y, endX, endY, label }: LeaderProps) {
 
 /** ウェーハ工程の説明用模式図。Fab15の実断面や実測結果を表すものではありません。 */
 export default function WaferDiagram({ stage }: { stage: number }) {
-  const { locale } = useI18n();
+  const { locale, profile } = useI18n();
   const text = waferLabels[locale];
   const id = useId().replace(/:/g, '');
+  if (profile === 'kioxia') return <NandWaferDiagram stage={stage} locale={locale} />;
   const current = Math.max(0, Math.min(8, stage));
   const hasFilm = current >= 2 && current <= 8;
   const topY = hasFilm ? 103 : 111;

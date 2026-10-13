@@ -8,6 +8,8 @@ import {
   evidenceLabels as canonicalEvidenceLabels,
 } from './processes.ts';
 import type { EvidenceStatus, ProcessStage, PublicSource } from './processes.ts';
+import type { ModelProfile } from './modelProfiles.ts';
+import { getKioxiaProcessContent } from './kioxiaProcesses.ts';
 
 type TranslatedLocale = Exclude<Locale, 'ja'>;
 type ProcessText = Pick<ProcessStage,
@@ -462,7 +464,8 @@ const modelText: Record<TranslatedLocale, Pick<ProcessContent, 'modelTitle' | 's
   },
 };
 
-export function getProcessContent(locale: Locale): ProcessContent {
+export function getProcessContent(locale: Locale, profile: ModelProfile = 'micron'): ProcessContent {
+  if (profile === 'kioxia') return getKioxiaProcessContent(locale);
   if (locale === 'ja') {
     return {
       stages: canonicalStages,

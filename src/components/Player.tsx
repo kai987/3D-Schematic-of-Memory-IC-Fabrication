@@ -1,5 +1,4 @@
 import Icon from './Icon';
-import { DEMO_ROUTE } from '../data/processes';
 import { useI18n } from '../i18n/LocaleContext';
 import type { useSimulation } from '../hooks/useSimulation';
 import { STEP_SECONDS } from '../lib/playback';
@@ -8,7 +7,7 @@ export default function Player({ simulation }: { simulation: ReturnType<typeof u
   const s = simulation;
   const { text: { player: text }, stages } = useI18n();
   const seekProgress = (value: number) => {
-    const total = Math.min(value / 100 * DEMO_ROUTE.length, DEMO_ROUTE.length - 0.001);
+    const total = Math.min(value / 100 * s.routeLength, s.routeLength - 0.001);
     s.seek(Math.floor(total), (total % 1) * STEP_SECONDS);
   };
   return <div className="player" aria-label={text.label}>
@@ -22,6 +21,6 @@ export default function Player({ simulation }: { simulation: ReturnType<typeof u
       <option value="0.5">0.5×</option><option value="1">1×</option><option value="2">2×</option>
     </select></label>
     <button className="icon-button" aria-label={text.previous} onClick={() => s.seek(s.position.cursor - 1)} disabled={s.position.cursor === 0}><Icon name="previous" /></button>
-    <button className="icon-button" aria-label={text.next} onClick={() => s.seek(s.position.cursor + 1)} disabled={s.position.cursor === DEMO_ROUTE.length - 1}><Icon name="next" /></button>
+    <button className="icon-button" aria-label={text.next} onClick={() => s.seek(s.position.cursor + 1)} disabled={s.position.cursor === s.routeLength - 1}><Icon name="next" /></button>
   </div>;
 }

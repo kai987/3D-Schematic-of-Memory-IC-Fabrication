@@ -13,6 +13,7 @@ import { createSceneLabels } from './sceneLabels';
 import { createContextRecovery } from '../lib/contextRecovery';
 import { exportFabGLB } from './exportFab';
 import { createEnvironment } from './createEnvironment';
+import type { ModelProfile } from '../data/modelProfiles';
 
 export type SceneView = 'all' | 'fab' | 'probe';
 export interface FabSceneHandle { reset: () => void; focus: (stage: number) => void; exportGLB: () => Promise<void> }
@@ -37,27 +38,35 @@ interface SceneRuntime {
   retryRecovery: () => void;
 }
 
-const exportNames: Record<Locale, string> = {
-  ja: '東広島Fab15_ウェーハ製造工程_公開資料模式モデル.glb',
-  en: 'Higashihiroshima_Fab15_Wafer_Fabrication_Public_Information_Model.glb',
-  zh: '东广岛Fab15_晶圆制造工程_公开资料示意模型.glb',
+const exportNames: Record<ModelProfile, Record<Locale, string>> = {
+  micron: {
+    ja: '東広島Fab15_ウェーハ製造工程_公開資料模式モデル.glb',
+    en: 'Higashihiroshima_Fab15_Wafer_Fabrication_Public_Information_Model.glb',
+    zh: '东广岛Fab15_晶圆制造工程_公开资料示意模型.glb',
+  },
+  kioxia: {
+    ja: 'キオクシア四日市_3D-NAND製造工程_公開資料模式モデル.glb',
+    en: 'KIOXIA_Yokkaichi_3D-NAND_Public_Information_Model.glb',
+    zh: '凯侠四日市_3D-NAND制造工艺_公开资料示意模型.glb',
+  },
 };
 
 const modelMetadata: Record<Locale, { purpose: string; representation: string; numberMeaning: string }> = {
-  ja: { purpose: 'Fab15公開資料に基づく工程分類の学習用モデル', representation: '装置外観・寸法・配置は模式表現', numberMeaning: '工程IDは分類番号であり、実際の製造順序を示さない' },
-  en: { purpose: 'Learning model of process categories based on Fab15 public information', representation: 'Equipment appearance, dimensions and arrangement are schematic', numberMeaning: 'Process IDs identify categories, not the actual manufacturing order' },
-  zh: { purpose: '基于 Fab15 公开资料的工程分类学习模型', representation: '设备外观、尺寸与布置均为示意表达', numberMeaning: '工程 ID 是分类编号，不代表实际制造顺序' },
+  ja: { purpose: '公開資料に基づく工程分類の学習用モデル', representation: '装置外観・寸法・配置は模式表現', numberMeaning: '工程IDは分類番号であり、実際の製造順序を示さない' },
+  en: { purpose: 'Learning model of process categories based on public information', representation: 'Equipment appearance, dimensions and arrangement are schematic', numberMeaning: 'Process IDs identify categories, not the actual manufacturing order' },
+  zh: { purpose: '基于公开资料的工艺分类学习模型', representation: '设备外观、尺寸与布置均为示意表达', numberMeaning: '工程 ID 是分类编号，不代表实际制造顺序' },
 };
 
 function localizeModel(group: THREE.Group, stations: THREE.Group[], localized: ReturnType<typeof useI18n>) {
   const metadata = modelMetadata[localized.locale];
-  const transportContent = getTransportContent(localized.locale);
+  const transportContent = getTransportContent(localized.locale, localized.profile);
   group.name = localized.modelTitle;
   Object.assign(group.userData, {
     title: localized.modelTitle, language: localized.locale, disclaimer: localized.disclaimer,
     scope: localized.scopeNote, scopeNote: localized.scopeNote, modelPurpose: metadata.purpose,
     representation: metadata.representation, classificationNumberMeaning: metadata.numberMeaning,
     modelType: 'public-information-schematic', sources: localized.sources,
+    profile: localized.profile, memoryType: localized.profile === 'kioxia' ? '3D NAND' : 'DRAM',
     transportSystems: Object.values(transportContent.items),
     processes: localized.stages.map(s => ({
       id: s.id, title: s.title, equipment: s.equipment, description: s.description,
@@ -113,8 +122,8 @@ function applyTheme(r: SceneRuntime, theme: Theme) {
 
 const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, playing, playbackPosition, showLabels, view, theme, transport, snapshot, onSelect, onSelectTransport, onAvailabilityChange }, ref) {
   const localized = useI18n();
-  const { locale, stages, text } = localized;
-  const transportContent = getTransportContent(locale);
+  const { locale, profile, stages, text } = localized;
+  const transportContent = getTransportContent(locale, profile);
   const liveI18n = useRef(localized);
   liveI18n.current = localized;
   const liveTheme = useRef(theme);
@@ -181,7 +190,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
       const url = URL.createObjectURL(new Blob([result], { type: 'model/gltf-binary' }));
       const link = document.createElement('a');
       link.href = url;
-      link.download = exportNames[localized.locale];
+      link.download = exportNames[localized.profile][localized.locale];
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     },
@@ -253,7 +262,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
     const fill = new THREE.DirectionalLight(0xd0e9f3, 1.2);
     fill.position.set(20, 12, -8);
     scene.add(fill);
-    const model = buildFab();
+    const model = buildFab({ profile });
     localizeModel(model.group, model.stations, liveI18n.current);
     for (const part of model.movingParts) part.object.userData.baseX = part.object.position.x;
     const payload = model.carrier.getObjectByName('FOUP昇降部');
@@ -458,7 +467,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
       renderer.domElement.remove();
       runtime.current = null;
     };
-  }, [snapshot, attempt]);
+  }, [snapshot, attempt, profile]);
 
   useEffect(() => {
     if (runtime.current) { applyTheme(runtime.current, theme); runtime.current.invalidate(); }
