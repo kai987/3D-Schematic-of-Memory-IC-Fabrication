@@ -21,7 +21,8 @@ function revealInspector() {
 
 export default function App() {
   const { text, locale, setLocale, theme, setTheme, scopeNote } = useI18n();
-  const simulation = useSimulation();
+  const [sceneAvailable, setSceneAvailable] = useState(true);
+  const simulation = useSimulation(!sceneAvailable);
   const scene = useRef<FabSceneHandle>(null);
   const [view, setView] = useState<SceneView>('all');
   const [showLabels, setShowLabels] = useState(true);
@@ -74,7 +75,7 @@ export default function App() {
     <main className="workspace">
       <section className="model-area" aria-label={text.viewLabel}>
         <div className="canvas-area">
-          <FabScene ref={scene} theme={theme} stage={simulation.stage} playing={simulation.playing} playbackPosition={simulation.progress} snapshot={simulation.snapshot} showLabels={showLabels} view={view} onSelect={selectStage} transport={transport} onSelectTransport={selectTransport} />
+          <FabScene ref={scene} theme={theme} stage={simulation.stage} playing={simulation.playing && sceneAvailable} playbackPosition={simulation.progress} snapshot={simulation.snapshot} showLabels={showLabels} view={view} onSelect={selectStage} transport={transport} onSelectTransport={selectTransport} onAvailabilityChange={setSceneAvailable} />
           <div className="viewport-toolbar">
             <div className="view-tabs" aria-label={text.rangeLabel}>
               {(['all', 'fab', 'probe'] as const).map(value =>

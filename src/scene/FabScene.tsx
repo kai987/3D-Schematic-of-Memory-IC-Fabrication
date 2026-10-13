@@ -2,7 +2,6 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import type { RefObject } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildFab, STATION_POSITIONS } from './buildFab';
 import type { SimulationSnapshot } from '../hooks/useSimulation';
 import { useI18n } from '../i18n/LocaleContext';
@@ -11,10 +10,13 @@ import { getTransportContent } from '../data/transport';
 import type { TransportItemId } from '../data/transport';
 import { createDemandLoop } from '../lib/demandLoop';
 import { createSceneLabels } from './sceneLabels';
+import { createContextRecovery } from '../lib/contextRecovery';
+import { exportFabGLB } from './exportFab';
+import { createEnvironment } from './createEnvironment';
 
 export type SceneView = 'all' | 'fab' | 'probe';
 export interface FabSceneHandle { reset: () => void; focus: (stage: number) => void; exportGLB: () => Promise<void> }
-interface Props { stage: number; playing: boolean; playbackPosition: number; showLabels: boolean; view: SceneView; theme: Theme; transport: TransportItemId | null; snapshot: RefObject<SimulationSnapshot>; onSelect: (id: number) => void; onSelectTransport: (id: TransportItemId) => void }
+interface Props { stage: number; playing: boolean; playbackPosition: number; showLabels: boolean; view: SceneView; theme: Theme; transport: TransportItemId | null; snapshot: RefObject<SimulationSnapshot>; onSelect: (id: number) => void; onSelectTransport: (id: TransportItemId) => void; onAvailabilityChange: (available: boolean) => void }
 
 interface SceneRuntime {
   camera: THREE.OrthographicCamera;
@@ -32,6 +34,7 @@ interface SceneRuntime {
   transitioning: boolean;
   invalidate: () => void;
   labels: ReturnType<typeof createSceneLabels>;
+  retryRecovery: () => void;
 }
 
 const exportNames: Record<Locale, string> = {
@@ -108,7 +111,7 @@ function applyTheme(r: SceneRuntime, theme: Theme) {
   });
 }
 
-const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, playing, playbackPosition, showLabels, view, theme, transport, snapshot, onSelect, onSelectTransport }, ref) {
+const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, playing, playbackPosition, showLabels, view, theme, transport, snapshot, onSelect, onSelectTransport, onAvailabilityChange }, ref) {
   const localized = useI18n();
   const { locale, stages, text } = localized;
   const transportContent = getTransportContent(locale);
@@ -125,6 +128,8 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
   selection.current = onSelect;
   const transportSelection = useRef(onSelectTransport);
   transportSelection.current = onSelectTransport;
+  const availability = useRef(onAvailabilityChange);
+  availability.current = onAvailabilityChange;
   const liveStage = useRef(stage);
   liveStage.current = stage;
   const liveLabels = useRef(showLabels);
@@ -132,8 +137,16 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
   const liveView = useRef(view);
   liveView.current = view;
   const runtime = useRef<SceneRuntime | null>(null);
+  const savedView = useRef<{ position: THREE.Vector3; target: THREE.Vector3; zoom: number } | null>(null);
+  const appliedView = useRef<SceneView | null>(null);
   const [error, setError] = useState<'webglError' | 'contextLost' | null>(null);
   const [ready, setReady] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  const retryScene = () => {
+    if (runtime.current) runtime.current.retryRecovery();
+    else setAttempt(value => value + 1);
+  };
 
   const moveCamera = (target: THREE.Vector3, zoom: number) => {
     const r = runtime.current;
@@ -158,31 +171,13 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
     exportGLB: async () => {
       const r = runtime.current;
       if (!r) throw new Error(liveI18n.current.text.scene.exportLoading);
-      const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
-      // Selection ornaments are UI, not part of the saved scientific model.
-      const copy = r.model.group.clone(true);
       const localized = liveI18n.current;
-      const copiedStations = copy.children.filter((object): object is THREE.Group => object instanceof THREE.Group && typeof object.userData.stage === 'number');
-      localizeModel(copy, copiedStations, localized);
-      copy.traverse(object => { if (object.name.startsWith('selection')) object.visible = false; });
-      const savedCarrier = copy.getObjectByName('OHT・FOUP 搬送キャリア');
-      if (savedCarrier) {
-        savedCarrier.visible = true;
-        savedCarrier.position.set(STATION_POSITIONS[0][0], 4.5, -2);
-        const savedPayload = savedCarrier.getObjectByName('FOUP昇降部');
-        if (savedPayload) savedPayload.position.y = -1.7;
-        for (const name of ['昇降ケーブル左', '昇降ケーブル右']) {
-          const cable = savedCarrier.getObjectByName(name);
-          if (cable) { cable.position.y = -0.64; cable.scale.y = 0.4; }
-        }
-      }
-      let result: ArrayBuffer | object;
+      let result: ArrayBuffer;
       try {
-        result = await new GLTFExporter().parseAsync(copy, { binary: true, onlyVisible: true });
+        result = await exportFabGLB(r.model, model => localizeModel(model.group, model.stations, localized));
       } catch {
         throw new Error(liveI18n.current.text.scene.exportFailed);
       }
-      if (!(result instanceof ArrayBuffer)) throw new Error(liveI18n.current.text.scene.exportFailed);
       const url = URL.createObjectURL(new Blob([result], { type: 'model/gltf-binary' }));
       const link = document.createElement('a');
       link.href = url;
@@ -194,14 +189,19 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
 
   useEffect(() => {
     const container = host.current!;
+    setError(null);
+    setReady(false);
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     } catch {
       setError('webglError');
+      availability.current(false);
       return;
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    // Cache the optional restore extension while the context is still valid.
+    renderer.extensions.has('WEBGL_lose_context');
     renderer.setClearColor('#e9eff2');
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -224,12 +224,22 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
     controls.maxZoom = 5;
     controls.minPolarAngle = 0.25;
     controls.maxPolarAngle = Math.PI / 2.2;
+    if (savedView.current) {
+      camera.position.copy(savedView.current.position);
+      controls.target.copy(savedView.current.target);
+      camera.zoom = savedView.current.zoom;
+      camera.updateProjectionMatrix();
+    }
     controls.update();
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const room = new RoomEnvironment();
-    const env = pmrem.fromScene(room, 0.04);
-    scene.environment = env.texture;
-    room.dispose();
+    let environment: THREE.WebGLRenderTarget;
+    try {
+      environment = createEnvironment(renderer);
+    } catch {
+      controls.dispose(); renderer.dispose(); renderer.domElement.remove();
+      setError('webglError'); availability.current(false);
+      return;
+    }
+    scene.environment = environment.texture;
     const hemisphere = new THREE.HemisphereLight(0xe5f5ff, 0x70848d, 1.6);
     scene.add(hemisphere);
     const sun = new THREE.DirectionalLight(0xffffff, 2.6);
@@ -262,7 +272,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
       anchors: model.labelAnchors,
       movingFoup,
     });
-    runtime.current = { camera, controls, model, renderer, scene, hemisphere, sun, fill, floorMaterial, desiredTarget: controls.target.clone(), desiredCamera: camera.position.clone(), desiredZoom: 1, transitioning: false, invalidate, labels: sceneLabels };
+    runtime.current = { camera, controls, model, renderer, scene, hemisphere, sun, fill, floorMaterial, desiredTarget: controls.target.clone(), desiredCamera: camera.position.clone(), desiredZoom: 1, transitioning: false, invalidate, labels: sceneLabels, retryRecovery: () => {} };
     applyTheme(runtime.current, liveTheme.current);
 
     const resize = () => {
@@ -312,8 +322,6 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
     controls.addEventListener('change', invalidate);
     renderer.domElement.addEventListener('pointerdown', pointerDown);
     renderer.domElement.addEventListener('pointerup', pointerUp);
-    const contextLost = (e: Event) => { e.preventDefault(); setError('contextLost'); };
-    renderer.domElement.addEventListener('webglcontextlost', contextLost);
     const diagnostics = new URLSearchParams(window.location.search).has('perf');
     let renderedFrames = 0;
     const stationPoint = (id: number) => {
@@ -382,7 +390,47 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
       return state.playing || r.transitioning || cameraChanged;
     };
     demand = createDemandLoop({ requestFrame: requestAnimationFrame, cancelFrame: cancelAnimationFrame, render: animate });
-    const visibilityChanged = () => demand?.setVisible(document.visibilityState !== 'hidden');
+    const recovery = createContextRecovery({
+      canvas: renderer.domElement,
+      onLost: () => {
+        demand?.setVisible(false);
+        controls.enabled = false;
+        setError('contextLost');
+        availability.current(false);
+      },
+      rebuild: () => {
+        // Render-target pixels (PMREM and cached shadows) were lost with the
+        // context. Three recreates buffers, but these must be rendered again.
+        const next = createEnvironment(renderer);
+        const previous = environment;
+        environment = next;
+        scene.environment = next.texture;
+        previous.dispose();
+        sun.shadow.map?.dispose(); sun.shadow.map = null;
+        sun.shadow.mapPass?.dispose(); sun.shadow.mapPass = null;
+        renderer.shadowMap.needsUpdate = true;
+        sun.shadow.needsUpdate = true;
+        renderer.extensions.has('WEBGL_lose_context');
+        if (runtime.current) applyTheme(runtime.current, liveTheme.current);
+      },
+      onRecovered: () => {
+        controls.enabled = true;
+        setError(null);
+        availability.current(true);
+        demand?.setVisible(document.visibilityState !== 'hidden');
+        invalidate();
+      },
+      onFailure: () => { setError('contextLost'); },
+    });
+    runtime.current.retryRecovery = () => {
+      if (!renderer.getContext().isContextLost()) { void recovery.retry(); return; }
+      if (renderer.extensions.has('WEBGL_lose_context')) renderer.forceContextRestore();
+      else {
+        savedView.current = { position: camera.position.clone(), target: controls.target.clone(), zoom: camera.zoom };
+        setAttempt(value => value + 1);
+      }
+    };
+    const visibilityChanged = () => demand?.setVisible(document.visibilityState !== 'hidden' && !recovery.isLost());
     const fontsChanged = () => { sceneLabels.invalidateMeasurements(); invalidate(); };
     document.addEventListener('visibilitychange', visibilityChanged);
     document.fonts?.addEventListener('loadingdone', fontsChanged);
@@ -391,24 +439,26 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
     visibilityChanged();
     invalidate();
     setReady(true);
+    savedView.current = null;
+    availability.current(true);
     return () => {
       disposed = true;
       demand?.dispose();
+      recovery.dispose();
       document.removeEventListener('visibilitychange', visibilityChanged);
       document.fonts?.removeEventListener('loadingdone', fontsChanged);
       controls.removeEventListener('start', cancelTransition);
       controls.removeEventListener('change', invalidate);
       renderer.domElement.removeEventListener('pointerdown', pointerDown);
       renderer.domElement.removeEventListener('pointerup', pointerUp);
-      renderer.domElement.removeEventListener('webglcontextlost', contextLost);
       observer.disconnect();
       controls.dispose();
       model.dispose();
-      env.dispose(); pmrem.dispose(); sun.shadow.dispose(); renderer.dispose();
+      environment.dispose(); sun.shadow.dispose(); renderer.dispose();
       renderer.domElement.remove();
       runtime.current = null;
     };
-  }, [snapshot]);
+  }, [snapshot, attempt]);
 
   useEffect(() => {
     if (runtime.current) { applyTheme(runtime.current, theme); runtime.current.invalidate(); }
@@ -433,7 +483,8 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
   }, [playbackPosition, playing]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || appliedView.current === view) return;
+    appliedView.current = view;
     if (view === 'all') moveCamera(new THREE.Vector3(0, 1.1, 0), 1);
     else if (view === 'fab') moveCamera(new THREE.Vector3(-1.5, 1.1, 0), 1.15);
     else moveCamera(new THREE.Vector3(...STATION_POSITIONS[8]).add(new THREE.Vector3(0, 1, 0)), 2.4);
@@ -441,7 +492,7 @@ const FabScene = forwardRef<FabSceneHandle, Props>(function FabScene({ stage, pl
 
   return <div className="scene-host" ref={host} data-ready={ready ? 'true' : 'false'}>
     {!ready && !error ? <div className="scene-loading">{text.scene.loading}</div> : null}
-    {error ? <div className="scene-error" role="alert">{text.scene[error]}</div> : null}
+    {error ? <div className="scene-error" role="alert"><p>{text.scene[error]}</p><button onClick={retryScene}>{text.scene.retry}</button></div> : null}
     <div className="scene-labels" aria-label={text.scene.selectEquipment}>
       <svg className="transport-leaders" aria-hidden="true" focusable="false" width="100%" height="100%"
         style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>

@@ -11,7 +11,7 @@ export const ui = {
     sourcesButton: '公開資料・確認範囲', save: 'GLBを保存', saving: '保存中…', saved: 'GLBファイルを保存しました。', saveFailed: '保存できませんでした。もう一度お試しください。',
     scene: {
       loading: '3Dモデルを準備しています…', webglError: '3Dを表示できません。WebGLに対応したブラウザで開いてください。工程説明は下から選択できます。',
-      contextLost: '3Dの描画が中断されました。ページを再読み込みしてください。',
+      contextLost: '3Dの描画が中断されました。復旧すると同じ位置から続けられます。復旧しない場合は再試行してください。', retry: '3D表示を再試行',
       canvasLabel: '東広島Fab15の公開資料に基づくウェーハ製造の3D模式モデル。ドラッグで回転、ホイールで拡大縮小。',
       selectEquipment: '装置を選択', equipment: '装置', exportLoading: '3Dモデルを読み込み中です。', exportFailed: 'モデルの保存に失敗しました。',
     },
@@ -47,7 +47,7 @@ export const ui = {
     sourcesButton: 'Sources & evidence scope', save: 'Save GLB', saving: 'Saving…', saved: 'GLB file saved.', saveFailed: 'Could not save the file. Please try again.',
     scene: {
       loading: 'Preparing the 3D model…', webglError: '3D is unavailable. Open this page in a browser with WebGL support. You can still select process descriptions below.',
-      contextLost: '3D rendering was interrupted. Please reload the page.',
+      contextLost: '3D rendering was interrupted. It will continue from the same position after recovery. Retry if it does not recover.', retry: 'Retry 3D view',
       canvasLabel: 'Illustrative 3D wafer fabrication model based on public information about Higashihiroshima Fab15. Drag to rotate; scroll to zoom.',
       selectEquipment: 'Select equipment', equipment: 'equipment', exportLoading: 'The 3D model is loading.', exportFailed: 'Could not export the model.',
     },
@@ -83,7 +83,7 @@ export const ui = {
     sourcesButton: '公开资料与确认范围', save: '保存 GLB', saving: '保存中…', saved: 'GLB 文件已保存。', saveFailed: '保存失败，请重试。',
     scene: {
       loading: '正在准备 3D 模型…', webglError: '无法显示 3D，请使用支持 WebGL 的浏览器。仍可在下方选择工艺说明。',
-      contextLost: '3D 渲染已中断，请重新加载页面。',
+      contextLost: '3D 渲染已中断，恢复后将从原位置继续。如未恢复，请重试。', retry: '重试 3D 显示',
       canvasLabel: '依据东广岛 Fab15 公开资料制作的晶圆制造 3D 示意模型。拖动旋转，滚动缩放。',
       selectEquipment: '选择设备', equipment: '设备', exportLoading: '3D 模型正在加载。', exportFailed: '模型导出失败。',
     },

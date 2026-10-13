@@ -85,6 +85,8 @@ h1 { margin: 0; font-size: clamp(22px, 2.3vw, 34px); font-weight: 700; letter-sp
 .orbit-hint { opacity: .85; }
 .scene-loading, .scene-error { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; padding: 40px; z-index: 5; background: #e9eff2e8; font-size: 15px; }
 .scene-error { color: #8d352d; }
+.scene-error p { max-width: 32em; margin: 0 0 18px; }
+.scene-error button { justify-self: center; min-height: 44px; padding: 10px 20px; border: 1px solid var(--control-border); border-radius: 5px; color: var(--navy); background: var(--surface); }
 .player { min-height: 72px; padding: 9px 18px; display: flex; align-items: center; gap: 12px; background: var(--soft-surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .play-button { display: flex; align-items: center; gap: 12px; padding: 0 15px 0 0; flex-shrink: 0; font-size: 13px; font-weight: 500; }
 .play-circle { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; background: var(--teal); color: #fff; }

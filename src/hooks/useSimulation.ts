@@ -4,7 +4,7 @@ import { advancePlayback, STEP_SECONDS, TRANSFER_SECONDS } from '../lib/playback
 
 export interface SimulationSnapshot { stage: number; previousStage: number; transfer: number; processing: number; playing: boolean; time: number }
 
-export function useSimulation() {
+export function useSimulation(suspended = false) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [position, setPosition] = useState({ cursor: 2, elapsed: TRANSFER_SECONDS, ended: false });
@@ -24,8 +24,12 @@ export function useSimulation() {
   }, []);
 
   useEffect(() => {
-    updateSnapshot(positionRef.current, playing);
-    if (!playing) return;
+    updateSnapshot(positionRef.current, playing && !suspended);
+    if (!playing || suspended) {
+      // Keep the last visible position while graphics resources are unavailable.
+      setPosition(positionRef.current);
+      return;
+    }
     let raf = 0;
     let previousTime = 0;
     let lastPublish = 0;
@@ -42,7 +46,7 @@ export function useSimulation() {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [playing, speed, updateSnapshot]);
+  }, [playing, speed, suspended, updateSnapshot]);
 
   const seek = useCallback((cursor: number, elapsed = TRANSFER_SECONDS) => {
     const next = { cursor: Math.max(0, Math.min(DEMO_ROUTE.length - 1, cursor)), elapsed, ended: false };
