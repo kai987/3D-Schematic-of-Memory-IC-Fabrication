@@ -8,6 +8,12 @@
 
 切断、組立、封止、パッケージ製品の最終試験は、両モデルの対象外です。この除外は、それぞれの工場に後工程が存在しないという断定ではありません。
 
+## Sites
+
+Sites配信先は [メモリ製造工程3D](https://memory-ic-fabrication-3d.huamengdiqidiguo.chatgpt.site) です。初回公開は所有者のみが閲覧できる私有サイトとして作成します。工場版・言語・昼夜の設定は閲覧ブラウザごとに保存します。
+
+`.openai/hosting.json` にSite IDと静的出力先 `dist` を保存します。同期用チェックアウト `.sites-checkout/` はGitHub管理対象外です。公開にはSitesのソース同期・ビルド・保存・デプロイを行い、GitHubへのpushだけでは更新されません。
+
 ## 起動する
 
 Node.js 24とnpmで動作を確認しています。
